@@ -1,0 +1,1 @@
+nvcc --shared -o libmatmul.so engine.cu -Xcompiler -fPIC
