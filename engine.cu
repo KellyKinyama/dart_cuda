@@ -1010,4 +1010,21 @@ extern "C"
         clip_grads_kernel<<<blocks, threads>>>(t->grad_gpu, limit, size);
         cudaDeviceSynchronize();
     }
+
+    DLLEXPORT void set_tensor_data(void* handle, float* cpu_data) {
+        if (!handle || !cpu_data) return;
+
+        Tensor* t = (Tensor*)handle;
+        int size_in_bytes = t->rows * t->cols * sizeof(float);
+
+        // Copy from CPU (Host) to GPU (Device)
+        cudaError_t err = cudaMemcpy(t->data_gpu, cpu_data, size_in_bytes, cudaMemcpyHostToDevice);
+        
+        if (err != cudaSuccess) {
+            printf("CUDA Error in set_tensor_data: %s\n", cudaGetErrorString(err));
+        }
+
+        // Ensure copy is finished before Dart continues
+        cudaDeviceSynchronize();
+    }
 }

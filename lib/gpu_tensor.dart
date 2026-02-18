@@ -142,6 +142,10 @@ typedef _C_adam_step =
 typedef _C_clip = ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Float);
 typedef _D_clip = void Function(ffi.Pointer<ffi.Void>, double);
 
+typedef _C_set_data =
+    ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Float>);
+typedef _D_set_data =
+    void Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Float>);
 // 2. Define the Dart-style signature
 typedef _D_adam_step =
     void Function(
@@ -184,6 +188,7 @@ class CudaEngine {
   late _D_to_host tensorToHost;
   late _D_adam_step adamStep;
   late _D_clip clipGradients;
+  late _D_set_data setTensorData;
 
   CudaEngine() {
     _lib = ffi.DynamicLibrary.open(Directory.current.path + '/libmatmul.so');
@@ -240,6 +245,10 @@ class CudaEngine {
         >('zero_grad');
 
     clipGradients = _lib.lookupFunction<_C_clip, _D_clip>('clip_gradients');
+
+    setTensorData = _lib.lookupFunction<_C_set_data, _D_set_data>(
+      'set_tensor_data',
+    );
   }
 }
 
@@ -474,6 +483,30 @@ class Tensor {
     final cols = shape[1];
     final allData = fetchData();
     return allData.sublist(row * cols, (row + 1) * cols);
+  }
+
+  set data(List<double> newData) {
+    if (newData.length != length) {
+      throw ArgumentError(
+        "Data length ${newData.length} mismatch with Tensor length $length",
+      );
+    }
+
+    // Allocate native memory to hold the new data
+    final ptr = calloc<ffi.Float>(length);
+
+    // Fill the native buffer
+    for (int i = 0; i < length; i++) {
+      ptr[i] = newData[i];
+    }
+
+    // 1. You need this FFI call in your engine:
+    // engine.setTensorData(handle, ptr);
+    // It should perform: cudaMemcpy(t->data_gpu, ptr, size, cudaMemcpyHostToDevice);
+    engine.setTensorData(_handle, ptr);
+
+    // Clean up host memory
+    calloc.free(ptr);
   }
 
   bool _isDisposed = false;
