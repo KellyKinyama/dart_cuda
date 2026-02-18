@@ -171,6 +171,21 @@ typedef _D_slice =
 typedef UnaryOpFn = ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
 typedef UnaryOpDart = ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
 
+// Define the C signatures
+typedef NativeComputeCost =
+    ffi.Void Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+    );
+// Define the Dart signatures
+typedef DartComputeCost =
+    void Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+    );
+
 class CudaEngine {
   late ffi.DynamicLibrary _lib;
   late _D_create createTensor;
@@ -202,10 +217,9 @@ class CudaEngine {
   late _D_clip clipGradients;
   late _D_set_data setTensorData;
   late _D_slice sliceTensor;
-
   late UnaryOpDart abs_tensor;
-
   late UnaryOpDart softmax_forward;
+  late DartComputeCost _computeCostMatrix; // <--- The internal definition
 
   CudaEngine() {
     _lib = ffi.DynamicLibrary.open(Directory.current.path + '/libmatmul.so');
@@ -274,6 +288,18 @@ class CudaEngine {
     softmax_forward = _lib.lookupFunction<UnaryOpFn, UnaryOpDart>(
       'softmax_forward',
     );
+
+    _computeCostMatrix = _lib
+        .lookup<ffi.NativeFunction<NativeComputeCost>>('compute_cost_matrix')
+        .asFunction<DartComputeCost>();
+  }
+
+  void computeCostMatrix(
+    ffi.Pointer<ffi.Void> pb,
+    ffi.Pointer<ffi.Void> gb,
+    ffi.Pointer<ffi.Void> cm,
+  ) {
+    _computeCostMatrix(pb, gb, cm);
   }
 }
 
@@ -332,12 +358,12 @@ class Tensor {
   void step(double lr) => engine.tensorStep(_handle, lr);
   void backward() => engine.backward(_handle);
 
-  Tensor operator +(Tensor o) =>
-      Tensor._raw(engine.addTensors(_handle, o._handle), shape);
-  Tensor operator -(Tensor o) =>
-      Tensor._raw(engine.subTensors(_handle, o._handle), shape);
-  Tensor operator *(Tensor o) =>
-      Tensor._raw(engine.mulTensors(_handle, o._handle), shape);
+  // Tensor operator +(Tensor o) =>
+  //     Tensor._raw(engine.addTensors(_handle, o._handle), shape);
+  // Tensor operator -(Tensor o) =>
+  //     Tensor._raw(engine.subTensors(_handle, o._handle), shape);
+  // Tensor operator *(Tensor o) =>
+  //     Tensor._raw(engine.mulTensors(_handle, o._handle), shape);
   Tensor matmul(Tensor o) => Tensor._raw(
     engine.matmulTensors(_handle, o._handle),
     [shape[0], o.shape[1]],
@@ -345,6 +371,30 @@ class Tensor {
   Tensor sigmoid() => Tensor._raw(engine.sigmoidTensor(_handle), shape);
   Tensor pow(double e) => Tensor._raw(engine.powTensor(_handle, e), shape);
   Tensor log() => Tensor._raw(engine.logTensor(_handle), shape);
+
+  Tensor _scalarOp(
+    dynamic other,
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Void>)
+    opFunc,
+  ) {
+    if (other is Tensor) {
+      return Tensor._raw(opFunc(_handle, other._handle), shape);
+    } else if (other is double || other is int) {
+      // Create a temporary 1x1 tensor for the scalar value
+      final tempScalar = Tensor.fill([1], (other as num).toDouble());
+      final resultHandle = opFunc(_handle, tempScalar.handle);
+      tempScalar.dispose(); // Immediately free the temporary scalar handle
+      return Tensor._raw(resultHandle, shape);
+    }
+    throw ArgumentError(
+      "Operation not supported for type ${other.runtimeType}",
+    );
+  }
+
+  // Fixed Operators
+  Tensor operator +(dynamic o) => _scalarOp(o, engine.addTensors);
+  Tensor operator -(dynamic o) => _scalarOp(o, engine.subTensors);
+  Tensor operator *(dynamic o) => _scalarOp(o, engine.mulTensors);
 
   // Cross Entropy Implementation
   Tensor computeCrossEntropy(Tensor pred, Tensor target, List<Tensor> tracker) {
@@ -562,6 +612,24 @@ class Tensor {
   Tensor reshape(List<int> newShape) {
     // Use the SAME handle, but mark it as a view so it's never double-freed
     return Tensor._raw(this._handle, newShape, isView: true);
+  }
+
+  Tensor computeCostMatrix(Tensor gtBoxes) {
+    // 1. Validation
+    if (shape[1] != 4 || gtBoxes.shape[1] != 4) {
+      throw ArgumentError("Both tensors must have 4 columns (x, y, w, h)");
+    }
+
+    // 2. Prepare the destination tensor on the GPU
+    final int numQueries = shape[0];
+    final int numGT = gtBoxes.shape[0];
+    final costMatrix = Tensor.fill([numQueries, numGT], 0.0);
+
+    // 3. Call the engine using the internal handles
+    // 'gpu' here refers to your CudaEngine singleton/instance
+    engine.computeCostMatrix(this.handle, gtBoxes.handle, costMatrix.handle);
+
+    return costMatrix;
   }
 
   bool _isDisposed = false;

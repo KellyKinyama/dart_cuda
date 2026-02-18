@@ -25,25 +25,26 @@ void main() {
 
   final List<Map<String, dynamic>> gtObjects = [
     {
-      'bbox': [0.1, 0.1, 0.2, 0.2],
+      'bbox': [0.10, 0.10, 0.20, 0.20],
       'class_id': 1,
     },
     {
-      'bbox': [0.5, 0.5, 0.3, 0.3],
+      'bbox': [0.50, 0.50, 0.30, 0.30],
       'class_id': 2,
     },
   ];
+
+  List<int> lastAssignments = [];
 
   for (int epoch = 0; epoch <= 200; epoch++) {
     List<Tensor> tracker = [];
     optimizer.zeroGrad();
 
-    // 1. Forward Pass
     final preds = detector.forward(xInput, tracker);
     final logits = preds['logits']!.reshape([numQueries, numClasses + 1]);
     final boxes = preds['boxes']!.reshape([numQueries, 4]);
 
-    // 2. Hungarian Matching (CPU/GPU Hybrid)
+    // 1. Hungarian Matching
     final List<double> flatGT = [];
     for (var obj in gtObjects)
       flatGT.addAll((obj['bbox'] as List).cast<double>());
@@ -51,28 +52,23 @@ void main() {
 
     final costMatrixTensor = boxes.computeCostMatrix(gtBoxTensor);
     final List<double> costs = costMatrixTensor.fetchData();
+    final assignments = HungarianAlgorithm(
+      List.generate(
+        numQueries,
+        (q) => List.generate(numQueries, (g) {
+          if (g < gtObjects.length)
+            return (costs[q * gtObjects.length + g] * 10000).toInt();
+          return 1000000;
+        }),
+      ),
+    ).getAssignment();
 
-    final matrix = List.generate(
-      numQueries,
-      (q) => List.generate(numQueries, (g) {
-        if (g < gtObjects.length)
-          return (costs[q * gtObjects.length + g] * 10000).toInt();
-        return 1000000;
-      }),
-    );
-
-    final assignments = HungarianAlgorithm(matrix).getAssignment();
-
-    // Cleanup temporary matching tensors
+    lastAssignments = assignments;
     gtBoxTensor.dispose();
     costMatrixTensor.dispose();
 
-    // 3. Reorder Targets based on Assignments
-    // This aligns GT to the Queries so we can use vectorized math
-    final List<int> alignedClassIds = List.filled(
-      numQueries,
-      numClasses,
-    ); // Default to background
+    // 2. Vectorized Loss
+    final List<int> alignedClassIds = List.filled(numQueries, numClasses);
     final List<double> alignedBoxesRaw = List.filled(numQueries * 4, 0.0);
 
     for (int q = 0; q < numQueries; q++) {
@@ -87,31 +83,28 @@ void main() {
     final alignedGtBoxes = Tensor.fromList([numQueries, 4], alignedBoxesRaw);
     tracker.add(alignedGtBoxes);
 
-    // 4. Vectorized Loss (The "Working" Way)
-    // Class Loss (Native C++ call for the whole matrix)
     final classLoss = logits.crossEntropy(alignedClassIds);
-    tracker.add(classLoss);
-
-    // Box Loss (Native C++ matrix subtraction)
     final boxDiff = (boxes - alignedGtBoxes).abs();
-    tracker.add(boxDiff);
-
-    // Combine
     final totalLoss = classLoss + boxDiff;
+    tracker.add(classLoss);
+    tracker.add(boxDiff);
     tracker.add(totalLoss);
 
-    // 5. Backprop & Step
     totalLoss.backward();
     optimizer.step();
 
-    if (epoch % 20 == 0) {
-      final lossVal = totalLoss.fetchData()[0];
-      print(
-        "Epoch $epoch | Loss: ${lossVal.toStringAsFixed(6)} | Match: $assignments",
+    if (epoch % 50 == 0 || epoch == 200) {
+      print("\n--- Epoch $epoch ---");
+      print("Loss: ${totalLoss.fetchData()[0].toStringAsFixed(6)}");
+      _printDetectionTable(
+        boxes.fetchData(),
+        alignedBoxesRaw,
+        alignedClassIds,
+        numQueries,
       );
     }
 
-    // 6. Final Cleanup
+    // Cleanup
     final Set<int> freed = {};
     for (var t in tracker) {
       final addr = t.handle.address;
@@ -124,5 +117,36 @@ void main() {
 
   xInput.dispose();
   optimizer.dispose();
-  print("✅ Training Complete.");
+  print("\n✅ Training Complete.");
+}
+
+void _printDetectionTable(
+  List<double> pred,
+  List<double> target,
+  List<int> classes,
+  int n,
+) {
+  print(
+    "Query | Class | Predicted BBox             | Target BBox                | Error",
+  );
+  print(
+    "---------------------------------------------------------------------------------",
+  );
+  for (int i = 0; i < n; i++) {
+    final p = pred
+        .sublist(i * 4, i * 4 + 4)
+        .map((v) => v.toStringAsFixed(2))
+        .toList();
+    final t = target
+        .sublist(i * 4, i * 4 + 4)
+        .map((v) => v.toStringAsFixed(2))
+        .toList();
+
+    double error = 0;
+    for (int j = 0; j < 4; j++)
+      error += (pred[i * 4 + j] - target[i * 4 + j]).abs();
+
+    final label = classes[i] == 5 ? "BG" : "ID:${classes[i]}";
+    print("  #$i   |  $label  | $p | $t | ${error.toStringAsFixed(4)}");
+  }
 }

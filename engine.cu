@@ -579,6 +579,27 @@ __global__ void abs_bwd(float *a, float *grad_out, float *grad_a, int size)
     }
 }
 
+__global__ void compute_cost_matrix_kernel(
+    float *pred_boxes,  // [num_queries * 4]
+    float *gt_boxes,    // [num_gt * 4]
+    float *cost_matrix, // [num_queries * num_gt]
+    int num_queries,
+    int num_gt)
+{
+    int q = blockIdx.y * blockDim.y + threadIdx.y; // Query index
+    int g = blockIdx.x * blockDim.x + threadIdx.x; // GT index
+
+    if (q < num_queries && g < num_gt)
+    {
+        float l1_loss = 0.0f;
+        for (int i = 0; i < 4; i++)
+        {
+            l1_loss += fabsf(pred_boxes[q * 4 + i] - gt_boxes[g * 4 + i]);
+        }
+        cost_matrix[q * num_gt + g] = l1_loss;
+    }
+}
+
 extern "C"
 {
 
@@ -1212,5 +1233,19 @@ extern "C"
             // For matching costs, we usually don't backprop through the matching step!
         };
         return (void *)out;
+    }
+
+    DLLEXPORT void compute_cost_matrix(void *pb_h, void *gb_h, void *cm_h) {
+        Tensor *pb = (Tensor *)pb_h;
+        Tensor *gb = (Tensor *)gb_h;
+        Tensor *cm = (Tensor *)cm_h;
+    
+        dim3 threads(16, 16);
+        dim3 blocks((gb->rows + 15) / 16, (pb->rows + 15) / 16);
+    
+        compute_cost_matrix_kernel<<<blocks, threads>>>(
+            pb->data_gpu, gb->data_gpu, cm->data_gpu, pb->rows, gb->rows
+        );
+        cudaDeviceSynchronize();
     }
 }

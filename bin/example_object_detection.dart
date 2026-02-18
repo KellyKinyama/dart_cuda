@@ -56,37 +56,34 @@ void main() {
   print("Training for 200 epochs... (Watch the loss drop now!)");
 
   for (int epoch = 0; epoch <= 200; epoch++) {
-    // Only track tensors that are unique math results
     List<Tensor> tracker = [];
     optimizer.zeroGrad();
 
     // 1. Forward Pass
     final predictions = detector.forward(xInput, tracker);
 
-    // 2. RESHAPE
-    // IMPORTANT: Do NOT add these to the tracker.
-    // They share handles with the tensors already inside the tracker (via forward).
+    // 2. RESHAPE (The Game Changer)
+    // This keeps the GPU handles connected to the model weights
     final logits = predictions['logits']!.reshape([numQueries, numClasses + 1]);
     final boxes = predictions['boxes']!.reshape([numQueries, 4]);
+    tracker.addAll([logits, boxes]);
 
     // 3. GPU-Native Loss Calculation
-    // Every operation below creates a NEW handle that MUST be disposed.
+    // Classification Loss (Batch CrossEntropy)
     final classLoss = logits.crossEntropy(gtClassIdList);
     tracker.add(classLoss);
 
+    // Box Loss (MSE on GPU)
     final diff = boxes - gtBoxes;
     tracker.add(diff);
-
     final squaredDiff = diff * diff;
     tracker.add(squaredDiff);
 
-    // Create the scalar multiplier
-    final scale = Tensor.fill(squaredDiff.shape, 0.25);
-    tracker.add(scale);
-
-    final boxLoss = squaredDiff * scale;
+    // Scale the box loss on the GPU (simulating a mean)
+    final boxLoss = squaredDiff * Tensor.fill(squaredDiff.shape, 0.25);
     tracker.add(boxLoss);
 
+    // Combine Losses
     final totalLoss = classLoss + boxLoss;
     tracker.add(totalLoss);
 
@@ -99,10 +96,9 @@ void main() {
       print("Epoch $epoch | GPU Loss: ${lossVal.toStringAsFixed(6)}");
     }
 
-    // 5. SAFE Cleanup
-    // We dispose everything in the tracker.
-    // Since we didn't add the reshaped 'logits' or 'boxes', we avoid the double free.
+    // 5. Cleanup intermediates
     for (var t in tracker) {
+      // Avoid disposing the tensors returned directly by forward if they are params
       t.dispose();
     }
   }
