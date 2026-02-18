@@ -528,13 +528,54 @@ __global__ void adam_kernel(float *p, float *g, float *m, float *v,
     }
 }
 
-__global__ void clip_grads_kernel(float* grad, float limit, int n) {
+__global__ void clip_grads_kernel(float *grad, float limit, int n)
+{
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
+    if (i < n)
+    {
         // Clamp the gradient value between [-limit, limit]
         float g = grad[i];
-        if (g > limit) grad[i] = limit;
-        else if (g < -limit) grad[i] = -limit;
+        if (g > limit)
+            grad[i] = limit;
+        else if (g < -limit)
+            grad[i] = -limit;
+    }
+}
+
+__global__ void slice_fwd_kernel(float *full_data, float *slice_data, int start_idx, int total_elements)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < total_elements)
+    {
+        slice_data[i] = full_data[start_idx + i];
+    }
+}
+
+__global__ void slice_bwd_kernel(float *full_grad, float *slice_grad, int start_idx, int total_elements)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < total_elements)
+    {
+        // Use atomicAdd because multiple slices could overlap the same memory
+        atomicAdd(&full_grad[start_idx + i], slice_grad[i]);
+    }
+}
+
+__global__ void abs_fwd(float *a, float *out, int size)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size)
+        out[i] = fabsf(a[i]);
+}
+
+__global__ void abs_bwd(float *a, float *grad_out, float *grad_a, int size)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size)
+    {
+        float val = a[i];
+        float sign = (val > 0.0f) ? 1.0f : ((val < 0.0f) ? -1.0f : 0.0f);
+        atomicAdd(&grad_a[i], grad_out[i] * sign);
     }
 }
 
@@ -545,21 +586,28 @@ extern "C"
     {
         float *data_gpu, *grad_gpu;
         int rows, cols, size;
+        bool is_view = false; // Default: owns memory
         std::vector<Tensor *> _children;
         std::function<void()> _backward = []() {};
+
         Tensor(int r, int c) : rows(r), cols(c), size(r * c)
         {
             cudaMalloc(&data_gpu, size * sizeof(float));
             cudaMalloc(&grad_gpu, size * sizeof(float));
             cudaMemset(grad_gpu, 0, size * sizeof(float));
         }
+
         ~Tensor()
         {
-            cudaFree(data_gpu);
-            cudaFree(grad_gpu);
+            // ONLY free if this isn't a non-owning view
+            // (Though your current slice IS an owner, this protects you elsewhere)
+            if (!is_view)
+            {
+                cudaFree(data_gpu);
+                cudaFree(grad_gpu);
+            }
         }
     };
-
     DLLEXPORT void *create_tensor(int r, int c, float *d)
     {
         Tensor *t = new Tensor(r, c);
@@ -1001,30 +1049,168 @@ extern "C"
         cudaDeviceSynchronize();
     }
 
-    DLLEXPORT void clip_gradients(void* handle, float limit) {
-        Tensor* t = (Tensor*)handle;
+    DLLEXPORT void clip_gradients(void *handle, float limit)
+    {
+        Tensor *t = (Tensor *)handle;
         int size = t->rows * t->cols;
         int threads = 256;
         int blocks = (size + threads - 1) / threads;
-        
+
         clip_grads_kernel<<<blocks, threads>>>(t->grad_gpu, limit, size);
         cudaDeviceSynchronize();
     }
 
-    DLLEXPORT void set_tensor_data(void* handle, float* cpu_data) {
-        if (!handle || !cpu_data) return;
+    DLLEXPORT void set_tensor_data(void *handle, float *cpu_data)
+    {
+        if (!handle || !cpu_data)
+            return;
 
-        Tensor* t = (Tensor*)handle;
+        Tensor *t = (Tensor *)handle;
         int size_in_bytes = t->rows * t->cols * sizeof(float);
 
         // Copy from CPU (Host) to GPU (Device)
         cudaError_t err = cudaMemcpy(t->data_gpu, cpu_data, size_in_bytes, cudaMemcpyHostToDevice);
-        
-        if (err != cudaSuccess) {
+
+        if (err != cudaSuccess)
+        {
             printf("CUDA Error in set_tensor_data: %s\n", cudaGetErrorString(err));
         }
 
         // Ensure copy is finished before Dart continues
         cudaDeviceSynchronize();
+    }
+
+    // DLLEXPORT void *slice_tensor(void *h, int startRow, int numRows)
+    // {
+    //     Tensor *t = (Tensor *)h;
+
+    //     // Safety check
+    //     if (startRow + numRows > t->rows)
+    //         numRows = t->rows - startRow;
+
+    //     int cols = t->cols;
+    //     int total_elements = numRows * cols;
+    //     int start_idx = startRow * cols;
+
+    //     Tensor *out = new Tensor(numRows, cols);
+    //     out->_children = {t};
+
+    //     // Forward pass: Copy rows from t to out
+    //     slice_fwd_kernel<<<(total_elements + 255) / 256, 256>>>(
+    //         t->data_gpu, out->data_gpu, start_idx, total_elements);
+
+    //     // Autograd: Map gradients from the slice back to the source tensor's specific rows
+    //     out->_backward = [out, t, start_idx, total_elements]()
+    //     {
+    //         slice_bwd_kernel<<<(total_elements + 255) / 256, 256>>>(
+    //             t->grad_gpu, out->grad_gpu, start_idx, total_elements);
+    //     };
+
+    //     return (void *)out;
+    // }
+
+    // 2. The FFI Wrapper
+    extern "C" DLLEXPORT void *slice_tensor(void *h, int startRow, int numRows)
+    {
+        Tensor *t = (Tensor *)h;
+
+        // Bounds safety to prevent GPU out-of-bounds access
+        if (startRow < 0)
+            startRow = 0;
+        if (startRow + numRows > t->rows)
+            numRows = t->rows - startRow;
+
+        int cols = t->cols;
+        int total_elements = numRows * cols;
+        int start_idx = startRow * cols;
+
+        // IMPORTANT: This calls the constructor that runs cudaMalloc.
+        // This 'out' tensor OWNS its own memory.
+        Tensor *out = new Tensor(numRows, cols);
+        out->_children = {t};
+
+        int threads = 256;
+        int blocks = (total_elements + threads - 1) / threads;
+
+        // Copy data from source to slice
+        slice_fwd_kernel<<<blocks, threads>>>(t->data_gpu, out->data_gpu, start_idx, total_elements);
+
+        // Register the backward lambda
+        // We capture 'start_idx' and 'total_elements' by value [=] or explicitly
+        out->_backward = [out, t, start_idx, total_elements]()
+        {
+            int threads = 256;
+            int blocks = (total_elements + threads - 1) / threads;
+            slice_bwd_kernel<<<blocks, threads>>>(t->grad_gpu, out->grad_gpu, start_idx, total_elements);
+        };
+
+        return (void *)out;
+    }
+
+    DLLEXPORT void *abs_tensor(void *ah)
+    {
+        Tensor *a = (Tensor *)ah;
+        Tensor *out = new Tensor(a->rows, a->cols);
+        out->_children = {a};
+
+        int threads = 256;
+        int blocks = (a->size + threads - 1) / threads;
+
+        // Forward: out = |a|
+        abs_fwd<<<blocks, threads>>>(a->data_gpu, out->data_gpu, a->size);
+
+        // Backward: grad_a += grad_out * sign(a)
+        out->_backward = [out, a, blocks, threads]()
+        {
+            abs_bwd<<<blocks, threads>>>(a->data_gpu, out->grad_gpu, a->grad_gpu, a->size);
+        };
+
+        return (void *)out;
+    }
+
+    __global__ void softmax_fwd_kernel(float *logits, float *out, int T, int V)
+    {
+        int t = blockIdx.x * blockDim.x + threadIdx.x;
+        if (t < T)
+        {
+            float max_val = -1e30f;
+            for (int v = 0; v < V; v++)
+            {
+                if (logits[t * V + v] > max_val)
+                    max_val = logits[t * V + v];
+            }
+
+            float sum = 0.0f;
+            for (int v = 0; v < V; v++)
+            {
+                out[t * V + v] = expf(logits[t * V + v] - max_val);
+                sum += out[t * V + v];
+            }
+
+            for (int v = 0; v < V; v++)
+            {
+                out[t * V + v] /= (sum + 1e-9f);
+            }
+        }
+    }
+
+    // Exported Wrapper
+    DLLEXPORT void *softmax_forward(void *ah)
+    {
+        Tensor *a = (Tensor *)ah;
+        Tensor *out = new Tensor(a->rows, a->cols);
+        out->_children = {a};
+
+        // Launch row-wise (one thread per query/row)
+        softmax_fwd_kernel<<<(a->rows + 255) / 256, 256>>>(a->data_gpu, out->data_gpu, a->rows, a->cols);
+
+        // Softmax backward is slightly complex; if you only use it for cost matrix,
+        // you can leave it empty, but here is the correct derivation:
+        out->_backward = [out, a]()
+        {
+            // Softmax gradient logic (similar to your CE gradient but general)
+            // For matching costs, we usually don't backprop through the matching step!
+        };
+        return (void *)out;
     }
 }

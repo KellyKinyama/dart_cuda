@@ -159,6 +159,18 @@ typedef _D_adam_step =
       double eps,
     );
 
+typedef _C_slice =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Int32, // startRow
+      ffi.Int32, // numRows
+    );
+typedef _D_slice =
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, int, int);
+
+typedef UnaryOpFn = ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
+typedef UnaryOpDart = ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
+
 class CudaEngine {
   late ffi.DynamicLibrary _lib;
   late _D_create createTensor;
@@ -189,6 +201,11 @@ class CudaEngine {
   late _D_adam_step adamStep;
   late _D_clip clipGradients;
   late _D_set_data setTensorData;
+  late _D_slice sliceTensor;
+
+  late UnaryOpDart abs_tensor;
+
+  late UnaryOpDart softmax_forward;
 
   CudaEngine() {
     _lib = ffi.DynamicLibrary.open(Directory.current.path + '/libmatmul.so');
@@ -249,6 +266,14 @@ class CudaEngine {
     setTensorData = _lib.lookupFunction<_C_set_data, _D_set_data>(
       'set_tensor_data',
     );
+
+    sliceTensor = _lib.lookupFunction<_C_slice, _D_slice>('slice_tensor');
+
+    abs_tensor = _lib.lookupFunction<UnaryOpFn, UnaryOpDart>('abs_tensor');
+
+    softmax_forward = _lib.lookupFunction<UnaryOpFn, UnaryOpDart>(
+      'softmax_forward',
+    );
   }
 }
 
@@ -259,7 +284,9 @@ class Tensor {
   final List<int> shape;
   final int length;
 
-  Tensor._raw(this._handle, this.shape)
+  bool? isView; // New field
+
+  Tensor._raw(this._handle, this.shape, {this.isView = false})
     : length = shape.reduce((a, b) => a * b);
 
   // Manual Dispose
@@ -335,6 +362,17 @@ class Tensor {
     tracker.addAll([logPred, product, negOne]);
 
     return loss;
+  }
+
+  Tensor abs() {
+    final h = engine.abs_tensor(_handle);
+    return Tensor._raw(h, shape);
+  }
+
+  Tensor softmax() {
+    // Assuming your engine has a softmaxForward that handles [T, V] or [1, V]
+    final h = engine.softmax_forward(_handle);
+    return Tensor._raw(h, shape);
   }
 
   // Inside Tensor class
@@ -509,13 +547,43 @@ class Tensor {
     calloc.free(ptr);
   }
 
+  Tensor getRow(int row) {
+    // 1. Safety check to prevent C++ segmentation faults
+    if (row < 0 || row >= shape[0]) throw RangeError("Row index out of bounds");
+
+    // 2. Call the engine. This returns a NEW C++ Tensor* with its own cudaMalloc'd memory.
+    final handle = engine.sliceTensor(_handle, row, 1);
+
+    // 3. We pass isView: false (default) because this handle is UNIQUE and
+    // must be destroyed to free the memory allocated by slice_tensor.
+    return Tensor._raw(handle, [1, shape[1]], isView: false);
+  }
+
+  Tensor reshape(List<int> newShape) {
+    // Use the SAME handle, but mark it as a view so it's never double-freed
+    return Tensor._raw(this._handle, newShape, isView: true);
+  }
+
   bool _isDisposed = false;
 
   void dispose() {
-    if (_isDisposed) return;
+    // Treat null as false (not a view, so it should be destroyed)
+    if (_isDisposed || (isView ?? false) || _handle.address == 0) {
+      return;
+    }
+
     engine.destroyTensor(_handle);
     _isDisposed = true;
   }
+
+  // final bool isView; // New field
+
+  // Tensor._raw(this._handle, this.shape, {this.isView = false});
+
+  // Tensor reshape(List<int> newShape) {
+  //   // Mark this one as a view so it doesn't double-free
+  //   return Tensor._raw(this._handle, newShape, isView: true);
+  // }
 }
 
 void main() {
