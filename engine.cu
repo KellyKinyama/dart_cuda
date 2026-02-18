@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include <functional>
 #include <cmath>
+#include <curand_kernel.h>
 
 #define DLLEXPORT __attribute__((visibility("default")))
 
@@ -459,28 +460,47 @@ __global__ void cross_entropy_fwd(float *logits, int *targets, float *loss, int 
     int t = blockIdx.x * blockDim.x + threadIdx.x;
     if (t < T)
     {
+        // Only print for the first index so we don't flood the terminal
+        // if (t == 0)
+        // {
+        //     printf("[GPU KERNEL] T=%d, V=%d, target[0]=%d, logit[0]=%f\n", T, V, targets[0], logits[0]);
+        // }
         // 1. Find max for numerical stability
         float max_val = -1e30f;
+        float sum_logits = 0.0f; // Track sum for label smoothing
         for (int v = 0; v < V; v++)
         {
-            if (logits[t * V + v] > max_val)
-                max_val = logits[t * V + v];
+            float val = logits[t * V + v];
+            if (val > max_val)
+                max_val = val;
+            sum_logits += val;
         }
 
         // 2. Compute Log-Sum-Exp
-        float lse = 0.0f;
+        float lse_sum = 0.0f;
         for (int v = 0; v < V; v++)
         {
-            lse += expf(logits[t * V + v] - max_val);
+            lse_sum += expf(logits[t * V + v] - max_val);
         }
-        lse = max_val + logf(lse);
+        float lse = max_val + logf(lse_sum + 1e-12f);
 
-        // 3. Loss = logsumexp(logits) - logits[target]
+        // 3. Label Smoothing Logic
+        // We act as if the target is 90% likely and the other 10%
+        // is spread across all other moves.
+        float epsilon = 0.1f;
         int target_idx = targets[t];
-        loss[t] = lse - logits[t * V + target_idx];
+        float logit_target = logits[t * V + target_idx];
+
+        // Standard CE Loss
+        float ce_loss = lse - logit_target;
+
+        // Smoothing term: lse - average_logit
+        float smooth_loss = lse - (sum_logits / V);
+
+        // Final blended loss
+        loss[t] = (1.0f - epsilon) * ce_loss + epsilon * smooth_loss;
     }
 }
-
 __global__ void cross_entropy_bwd(float *logits, int *targets, float *grad_logits, int T, int V, float grad_output)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -490,21 +510,45 @@ __global__ void cross_entropy_bwd(float *logits, int *targets, float *grad_logit
         int v = idx % V;
         int target_idx = targets[t];
 
-        // Recompute softmax for the gradient
+        // 1. Recompute max for stable softmax
         float max_val = -1e30f;
         for (int i = 0; i < V; i++)
-            if (logits[t * V + i] > max_val)
-                max_val = logits[t * V + i];
+        {
+            float val = logits[t * V + i];
+            if (val > max_val)
+                max_val = val;
+        }
 
-        float sum = 0.0f;
+        // 2. Recompute sum of exponentials
+        float sum_exp = 0.0f;
         for (int i = 0; i < V; i++)
-            sum += expf(logits[t * V + i] - max_val);
+        {
+            sum_exp += expf(logits[t * V + i] - max_val);
+        }
 
-        float softmax = expf(logits[idx] - max_val) / sum;
+        // 3. Current Softmax probability
+        float softmax = expf(logits[idx] - max_val) / (sum_exp + 1e-12f);
 
-        // Gradient of Cross Entropy: Softmax(logits) - 1(if v == target)
+        // 4. Label Smoothing Logic
+        float epsilon = 0.1f;
         float indicator = (v == target_idx) ? 1.0f : 0.0f;
-        grad_logits[idx] = (softmax - indicator) * (grad_output / T);
+
+        // target_prob for 4098 classes with eps 0.1:
+        // Correct move: 0.90002
+        // Wrong moves:  0.000024
+        float target_prob = (1.0f - epsilon) * indicator + (epsilon / V);
+
+        // 5. Scaling Correction
+        // We multiply by grad_output (usually 1.0) and do NOT divide by T here
+        // if you want the full gradient signal to reach Adam.
+        // Usually, the loss function in the autograd system handles the 1/T scaling.
+        grad_logits[idx] = (softmax - target_prob) * grad_output;
+
+        // DEBUG: Print gradient for the first move of the first sequence
+        if (idx == target_idx)
+        {
+            // printf("[GRAD DEBUG] target_prob: %f, softmax: %f, grad: %f\n", target_prob, softmax, grad_logits[idx]);
+        }
     }
 }
 
@@ -515,16 +559,40 @@ __global__ void adam_kernel(float *p, float *g, float *m, float *v,
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size)
     {
-        // Update biased moments
-        m[i] = b1 * m[i] + (1.0f - b1) * g[i];
-        v[i] = b2 * v[i] + (1.0f - b2) * (g[i] * g[i]);
+        // 1. Safe Step Count
+        // If t is 0, powf(b1, 0) is 1, leading to 1-1=0 denominator.
+        // We force t to be at least 1 for the math.
+        float step = (float)t + 1.0f;
 
-        // Bias correction
-        float m_hat = m[i] / (1.0f - powf(b1, t));
-        float v_hat = v[i] / (1.0f - powf(b2, t));
+        // 2. Gradient + Weight Decay
+        float weight_decay = 0.001f;
+        float grad = g[i];
 
-        // Update parameters
-        p[i] -= lr * m_hat / (sqrtf(v_hat) + eps);
+        // 3. Update biased moments
+        m[i] = b1 * m[i] + (1.0f - b1) * grad;
+        v[i] = b2 * v[i] + (1.0f - b2) * (grad * grad);
+
+        // 4. Bias correction (Mathematically safe now)
+        float m_hat = m[i] / (1.0f - powf(b1, step));
+        float v_hat = v[i] / (1.0f - powf(b2, step));
+
+        // 5. Compute Update
+        float delta = lr * m_hat / (sqrtf(v_hat) + eps);
+
+        // 6. Apply Update + Weight Decay (AdamW style)
+        // This is more stable than adding decay to the gradient directly
+        float new_p = p[i] - delta - (lr * weight_decay * p[i]);
+
+        // 7. Safety Clipping
+        if (new_p > 10.0f)
+            new_p = 10.0f;
+        if (new_p < -10.0f)
+            new_p = -10.0f;
+
+        p[i] = new_p;
+
+        // --- Optional Debug ---
+        // if (i == 0 && t % 100 == 0) printf("Step %d | p: %f | g: %f\n", t, p[i], g[i]);
     }
 }
 
@@ -640,6 +708,19 @@ __global__ void mean_bwd_kernel(float *grad_out, float *grad_a, int n)
     {
         // The gradient of mean(x) is 1/n.
         atomicAdd(&grad_a[i], grad_out[0] / (float)n);
+    }
+}
+
+__global__ void xavier_init_kernel(float* data, int size, int n_in, int n_out, unsigned long seed) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size) {
+        curandState state;
+        // Seed + i ensures every single weight gets a different random number
+        curand_init(seed, i, 0, &state);
+        
+        float limit = sqrtf(6.0f / (float)(n_in + n_out));
+        // curand_uniform is [0,1], we transform to [-limit, limit]
+        data[i] = (curand_uniform(&state) * 2.0f - 1.0f) * limit;
     }
 }
 
@@ -1334,5 +1415,22 @@ extern "C"
         };
 
         return (void *)out;
+    }
+
+    DLLEXPORT void tensor_xavier_init(void* ph, int n_in, int n_out, int seed) {
+        Tensor* p = (Tensor*)ph;
+        int size = p->rows * p->cols;
+        
+        int threads = 256;
+        int blocks = (size + threads - 1) / threads;
+        
+        xavier_init_kernel<<<blocks, threads>>>(p->data_gpu, size, n_in, n_out, (unsigned long)seed);
+        cudaDeviceSynchronize();
+    }
+
+    DLLEXPORT void tensor_zero_init(void* ph) {
+        Tensor* p = (Tensor*)ph;
+        int size = p->rows * p->cols;
+        cudaMemset(p->data_gpu, 0, size * sizeof(float));
     }
 }

@@ -189,6 +189,12 @@ typedef DartComputeCost =
 // Unary operations for reductions (collapsing a tensor to a 1x1 scalar)
 typedef _C_reduce = ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
 typedef _D_reduce = ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
+typedef _XavierInitC =
+    ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Int32, ffi.Int32, ffi.Int32);
+typedef _XavierInitDart = void Function(ffi.Pointer<ffi.Void>, int, int, int);
+
+typedef _ZeroInitC = ffi.Void Function(ffi.Pointer<ffi.Void>);
+typedef _ZeroInitDart = void Function(ffi.Pointer<ffi.Void>);
 
 class CudaEngine {
   late ffi.DynamicLibrary _lib;
@@ -226,9 +232,11 @@ class CudaEngine {
   late DartComputeCost _computeCostMatrix; // <--- The internal definition
   late _D_reduce sumTensor;
   late _D_reduce meanTensor;
+  late _ZeroInitDart _tensorZeroInit;
+  late _XavierInitDart _tensorXavierInit;
 
   CudaEngine() {
-    _lib = ffi.DynamicLibrary.open(Directory.current.path + '/libmatmul.so');
+    _lib = ffi.DynamicLibrary.open('${Directory.current.path}/libmatmul_v2.so');
     createTensor = _lib.lookupFunction<_C_create, _D_create>('create_tensor');
     destroyTensor = _lib.lookupFunction<_C_destroy, _D_destroy>(
       'destroy_tensor',
@@ -304,6 +312,13 @@ class CudaEngine {
     // Mean reduction: returns a 1x1 Tensor pointer
     meanTensor = _lib.lookupFunction<_C_reduce, _D_reduce>('mean_tensor');
 
+    _tensorXavierInit = _lib.lookupFunction<_XavierInitC, _XavierInitDart>(
+      'tensor_xavier_init',
+    );
+
+    _tensorZeroInit = _lib.lookupFunction<_ZeroInitC, _ZeroInitDart>(
+      'tensor_zero_init',
+    );
     // Ensure your existing slice and unary ops are there
     // sliceTensor = _lib.lookupFunction<_C_slice, _D_slice>('slice_tensor');
     // abs_tensor = _lib.lookupFunction<UnaryOpFn, UnaryOpDart>('abs_tensor');
@@ -384,6 +399,19 @@ class Tensor {
     final h = engine.meanTensor(this.handle);
     return Tensor._raw(h, [1, 1]);
   }
+
+  // void xavier(int nIn, int nOut) {
+  //   // Use current time as seed so every training run is unique
+  //   int seed = DateTime.now().millisecondsSinceEpoch;
+
+  //   // FFI call to the C++ wrapper
+  // engine.tensorXavierInit(
+  //     this.handle, // Assuming this is your Pointer to the C++ Tensor object
+  //     nIn,
+  //     nOut,
+  //     seed,
+  //   );
+  // }
 
   // Tensor operator +(Tensor o) =>
   //     Tensor._raw(engine.addTensors(_handle, o._handle), shape);
@@ -525,7 +553,7 @@ class Tensor {
     return Tensor._raw(handle, shape);
   }
 
-  static Tensor random(List<int> shape, {double scale = 0.02}) {
+  static Tensor random(List<int> shape, {double scale = 0.005}) {
     final int rows = shape[0];
     final int cols = shape.length > 1 ? shape[1] : 1;
     final int size = rows * cols;
