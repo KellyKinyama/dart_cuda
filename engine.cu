@@ -528,6 +528,16 @@ __global__ void adam_kernel(float *p, float *g, float *m, float *v,
     }
 }
 
+__global__ void clip_grads_kernel(float* grad, float limit, int n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        // Clamp the gradient value between [-limit, limit]
+        float g = grad[i];
+        if (g > limit) grad[i] = limit;
+        else if (g < -limit) grad[i] = -limit;
+    }
+}
+
 extern "C"
 {
 
@@ -988,6 +998,16 @@ extern "C"
             size, t, lr, b1, b2, eps);
 
         // Ensure the GPU finishes the update before Dart continues
+        cudaDeviceSynchronize();
+    }
+
+    DLLEXPORT void clip_gradients(void* handle, float limit) {
+        Tensor* t = (Tensor*)handle;
+        int size = t->rows * t->cols;
+        int threads = 256;
+        int blocks = (size + threads - 1) / threads;
+        
+        clip_grads_kernel<<<blocks, threads>>>(t->grad_gpu, limit, size);
         cudaDeviceSynchronize();
     }
 }

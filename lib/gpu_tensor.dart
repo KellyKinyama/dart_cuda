@@ -139,6 +139,9 @@ typedef _C_adam_step =
       ffi.Float eps, // Epsilon
     );
 
+typedef _C_clip = ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Float);
+typedef _D_clip = void Function(ffi.Pointer<ffi.Void>, double);
+
 // 2. Define the Dart-style signature
 typedef _D_adam_step =
     void Function(
@@ -180,6 +183,7 @@ class CudaEngine {
   late _D_loss crossEntropyLoss; // Add this line
   late _D_to_host tensorToHost;
   late _D_adam_step adamStep;
+  late _D_clip clipGradients;
 
   CudaEngine() {
     _lib = ffi.DynamicLibrary.open(Directory.current.path + '/libmatmul.so');
@@ -227,12 +231,15 @@ class CudaEngine {
     );
 
     adamStep = _lib.lookupFunction<_C_adam_step, _D_adam_step>('adam_step');
-    
-    // Ensure you also have zeroGrad defined
-    zeroGrad = _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Void>), 
-                                  void Function(ffi.Pointer<ffi.Void>)>('zero_grad');
 
-    
+    // Ensure you also have zeroGrad defined
+    zeroGrad = _lib
+        .lookupFunction<
+          ffi.Void Function(ffi.Pointer<ffi.Void>),
+          void Function(ffi.Pointer<ffi.Void>)
+        >('zero_grad');
+
+    clipGradients = _lib.lookupFunction<_C_clip, _D_clip>('clip_gradients');
   }
 }
 
