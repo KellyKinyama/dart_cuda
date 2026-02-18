@@ -1,5 +1,7 @@
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 typedef _C_create =
@@ -64,6 +66,92 @@ typedef _D_aft_cross =
       ffi.Pointer<ffi.Void>,
     );
 
+typedef _C_concat =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Pointer<ffi.Void>>,
+      ffi.Int32,
+    );
+typedef _D_concat =
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Pointer<ffi.Void>>, int);
+
+typedef _C_layernorm =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Float,
+    );
+typedef _D_layernorm =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+      double,
+    );
+
+// 1. Define the types
+typedef _C_embedding =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Int32>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Int32,
+      ffi.Int32,
+    );
+typedef _D_embedding =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Int32>,
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Void>,
+      int,
+      int,
+    );
+
+typedef _C_loss =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Int32>,
+      ffi.Int32,
+      ffi.Int32,
+    );
+typedef _D_loss =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Int32>,
+      int,
+      int,
+    );
+
+typedef _C_to_host =
+    ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Float>);
+typedef _D_to_host =
+    void Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Float>);
+
+typedef _C_adam_step =
+    ffi.Void Function(
+      ffi.Pointer<ffi.Void> p, // Parameters
+      ffi.Pointer<ffi.Void> m, // 1st Moment
+      ffi.Pointer<ffi.Void> v, // 2nd Moment
+      ffi.Int32 t, // Timestep
+      ffi.Float lr, // Learning Rate
+      ffi.Float b1, // Beta 1
+      ffi.Float b2, // Beta 2
+      ffi.Float eps, // Epsilon
+    );
+
+// 2. Define the Dart-style signature
+typedef _D_adam_step =
+    void Function(
+      ffi.Pointer<ffi.Void> p,
+      ffi.Pointer<ffi.Void> m,
+      ffi.Pointer<ffi.Void> v,
+      int t,
+      double lr,
+      double b1,
+      double b2,
+      double eps,
+    );
+
 class CudaEngine {
   late ffi.DynamicLibrary _lib;
   late _D_create createTensor;
@@ -85,6 +173,13 @@ class CudaEngine {
   late _D_op1 logTensor;
   late _D_aft aftForward;
   late _D_aft_cross aftCrossForward;
+  late _D_concat concatTensors;
+  late _D_layernorm layernormForward;
+  late _D_op1 geluTensor;
+  late _D_embedding embeddingForward;
+  late _D_loss crossEntropyLoss; // Add this line
+  late _D_to_host tensorToHost;
+  late _D_adam_step adamStep;
 
   CudaEngine() {
     _lib = ffi.DynamicLibrary.open(Directory.current.path + '/libmatmul.so');
@@ -111,6 +206,33 @@ class CudaEngine {
     aftCrossForward = _lib.lookupFunction<_C_aft_cross, _D_aft_cross>(
       'aft_cross_forward',
     );
+    concatTensors = _lib.lookupFunction<_C_concat, _D_concat>(
+      'concat_tensors_gpu',
+    );
+
+    layernormForward = _lib.lookupFunction<_C_layernorm, _D_layernorm>(
+      'layernorm_forward',
+    );
+
+    geluTensor = _lib.lookupFunction<_C_op1, _D_op1>('gelu_tensor');
+    embeddingForward = _lib.lookupFunction<_C_embedding, _D_embedding>(
+      'embedding_forward',
+    );
+    crossEntropyLoss = _lib.lookupFunction<_C_loss, _D_loss>(
+      'cross_entropy_loss',
+    );
+
+    tensorToHost = _lib.lookupFunction<_C_to_host, _D_to_host>(
+      'tensor_to_host',
+    );
+
+    adamStep = _lib.lookupFunction<_C_adam_step, _D_adam_step>('adam_step');
+    
+    // Ensure you also have zeroGrad defined
+    zeroGrad = _lib.lookupFunction<ffi.Void Function(ffi.Pointer<ffi.Void>), 
+                                  void Function(ffi.Pointer<ffi.Void>)>('zero_grad');
+
+    
   }
 }
 
@@ -125,7 +247,11 @@ class Tensor {
     : length = shape.reduce((a, b) => a * b);
 
   // Manual Dispose
-  void dispose() => engine.destroyTensor(_handle);
+  // void dispose() => engine.destroyTensor(_handle);
+
+  ffi.Pointer<ffi.Void> get handle => _handle;
+
+  Tensor gelu() => Tensor._raw(engine.geluTensor(_handle), shape);
 
   factory Tensor.fill(List<int> shape, double val) {
     final ptr = calloc<ffi.Float>(shape.reduce((a, b) => a * b));
@@ -209,6 +335,146 @@ class Tensor {
       engine.aftCrossForward(q._handle, k._handle, v._handle, wb._handle),
       q.shape,
     );
+  }
+
+  // Inside Tensor class
+  static Tensor concat(List<Tensor> tensors) {
+    final ptr = calloc<ffi.Pointer<ffi.Void>>(tensors.length);
+    for (int i = 0; i < tensors.length; i++) {
+      ptr[i] = tensors[i]._handle;
+    }
+    final h = engine.concatTensors(ptr, tensors.length);
+    calloc.free(ptr);
+    return Tensor._raw(h, [
+      tensors[0].shape[0],
+      tensors[0].shape[1] * tensors.length,
+    ]);
+  }
+
+  // In Tensor class
+  static Tensor layerNorm(Tensor x, Tensor gamma, Tensor beta, double eps) {
+    return Tensor._raw(
+      engine.layernormForward(x._handle, gamma._handle, beta._handle, eps),
+      x.shape,
+    );
+  }
+
+  // 3. In Tensor class
+  static Tensor embeddings(List<int> idx, Tensor wte, Tensor wpe) {
+    final T = idx.length;
+    final D = wte.shape[1];
+
+    // Allocate memory for the indices that C can read
+    final ptr = calloc<ffi.Int32>(T);
+    for (int i = 0; i < T; i++) ptr[i] = idx[i];
+
+    final handle = engine.embeddingForward(ptr, wte._handle, wpe._handle, T, D);
+
+    // We can free the host pointer immediately because C++ copied it to d_indices
+    calloc.free(ptr);
+
+    return Tensor._raw(handle, [T, D]);
+  }
+
+  static Tensor zeros(List<int> shape) {
+    final int rows = shape[0];
+    final int cols = shape.length > 1 ? shape[1] : 1;
+    final int size = rows * cols;
+
+    // Allocate native memory filled with 0.0
+    final ffi.Pointer<ffi.Float> buffer = calloc<ffi.Float>(size);
+    // calloc usually zeros memory, but let's be explicit
+    for (int i = 0; i < size; i++) {
+      buffer[i] = 0.0;
+    }
+
+    final handle = engine.createTensor(rows, cols, buffer);
+    calloc.free(buffer);
+
+    return Tensor._raw(handle, shape);
+  }
+
+  static Tensor random(List<int> shape, {double scale = 0.02}) {
+    final int rows = shape[0];
+    final int cols = shape.length > 1 ? shape[1] : 1;
+    final int size = rows * cols;
+
+    final math.Random rng = math.Random();
+
+    // 1. Allocate native memory (Pointer<Float>)
+    final ffi.Pointer<ffi.Float> nativeBuffer = calloc<ffi.Float>(size);
+
+    // 2. Fill the native buffer with random values
+    for (int i = 0; i < size; i++) {
+      // Approximating a small normal distribution
+      nativeBuffer[i] = (rng.nextDouble() * 2 - 1) * scale;
+    }
+
+    // 3. Pass the pointer to C++
+    // createTensor should be: Pointer<Void> Function(Int32, Int32, Pointer<Float>)
+    final handle = engine.createTensor(rows, cols, nativeBuffer);
+
+    // 4. IMPORTANT: Free the native memory after the GPU has copied it
+    calloc.free(nativeBuffer);
+
+    return Tensor._raw(handle, shape);
+  }
+
+  // Inside Tensor class
+  // Inside the Tensor class
+  Tensor crossEntropy(List<int> targets) {
+    // logits are [T, V]
+    final int T = shape[0];
+    final int V = shape[1];
+
+    if (targets.length != T) {
+      throw ArgumentError(
+        "Target length ${targets.length} must match Logits T: $T",
+      );
+    }
+
+    // Allocate native memory for targets
+    final ptr = calloc<ffi.Int32>(T);
+    for (int i = 0; i < T; i++) {
+      ptr[i] = targets[i];
+    }
+
+    // Call the engine
+    final handle = engine.crossEntropyLoss(_handle, ptr, T, V);
+
+    // Clean up the host pointer (C++ has already copied it to GPU)
+    calloc.free(ptr);
+
+    return Tensor._raw(handle, [1, 1]); // Returns a scalar loss
+  }
+
+  // Pulls ALL data from GPU to CPU
+  Float32List fetchData() {
+    final size = shape.reduce((a, b) => a * b);
+    final buffer = Float32List(size);
+    final ptr = calloc<ffi.Float>(size);
+
+    // Your C++ engine must have a tensor_to_host function
+    engine.tensorToHost(_handle, ptr);
+
+    for (int i = 0; i < size; i++) buffer[i] = ptr[i];
+    calloc.free(ptr);
+    return buffer;
+  }
+
+  // Pulls only one row (for sampling)
+  List<double> fetchRow(int row) {
+    final cols = shape[1];
+    final allData = fetchData();
+    return allData.sublist(row * cols, (row + 1) * cols);
+  }
+
+  bool _isDisposed = false;
+
+  void dispose() {
+    if (_isDisposed) return;
+    engine.destroyTensor(_handle);
+    _isDisposed = true;
   }
 }
 

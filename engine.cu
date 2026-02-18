@@ -86,6 +86,33 @@ __global__ void relu_fwd(float *a, float *out, int n)
     if (i < n)
         out[i] = fmaxf(0.0f, a[i]);
 }
+
+__global__ void gelu_fwd(float *a, float *out, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+    {
+        float x = a[i];
+        // Standard GELU approximation
+        out[i] = 0.5f * x * (1.0f + tanhf(0.7978845608f * (x + 0.044715f * x * x * x)));
+    }
+}
+
+__global__ void gelu_bwd(float *a, float *go, float *ga, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+    {
+        float x = a[i];
+        float x3 = x * x * x;
+        // Derivative of the GELU approximation
+        float inner = 0.7978845608f * (x + 0.044715f * x3);
+        float t = tanhf(inner);
+        float sech2 = 1.0f - t * t;
+        float deriv = 0.5f * (1.0f + t) + 0.5f * x * sech2 * 0.7978845608f * (1.0f + 3.0f * 0.044715f * x * x);
+        atomicAdd(&ga[i], deriv * go[i]);
+    }
+}
 __global__ void relu_bwd(float *da, float *go, float *ga, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -241,24 +268,27 @@ __global__ void aft_cross_fwd(float *Q, float *K, float *V, float *WB, float *ou
 }
 
 __global__ void aft_cross_bwd(
-    float* Q, float* K, float* V, float* WB, 
-    float* grad_out, 
-    float* grad_Q, float* grad_K, float* grad_V, float* grad_WB,
-    int TDec, int TEnc, int D) 
+    float *Q, float *K, float *V, float *WB,
+    float *grad_out,
+    float *grad_Q, float *grad_K, float *grad_V, float *grad_WB,
+    int TDec, int TEnc, int D)
 {
     int t = blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= TDec) return;
+    if (t >= TDec)
+        return;
 
-    for (int d = 0; d < D; d++) {
+    for (int d = 0; d < D; d++)
+    {
         // --- Re-calculate forward components for this specific d ---
         float num = 0.0f;
         float den = 0.0f;
-        for (int tp = 0; tp < TEnc; tp++) {
+        for (int tp = 0; tp < TEnc; tp++)
+        {
             float weight = expf(K[tp * D + d] + WB[t * TEnc + tp]);
             num += weight * V[tp * D + d];
             den += weight;
         }
-        
+
         float den_inv = 1.0f / (den + 1e-9f);
         float ratio = num * den_inv;
         float sigQ = 1.0f / (1.0f + expf(-Q[t * D + d]));
@@ -268,9 +298,10 @@ __global__ void aft_cross_bwd(
         atomicAdd(&grad_Q[t * D + d], gO * ratio * sigQ * (1.0f - sigQ));
 
         // 2. Gradients for K, V, and WB (Loop through encoder steps)
-        for (int tp = 0; tp < TEnc; tp++) {
+        for (int tp = 0; tp < TEnc; tp++)
+        {
             float weight = expf(K[tp * D + d] + WB[t * TEnc + tp]);
-            
+
             // dL/dV = gO * sigQ * (weight / den)
             float dV = gO * sigQ * (weight * den_inv);
             atomicAdd(&grad_V[tp * D + d], dV);
@@ -278,10 +309,222 @@ __global__ void aft_cross_bwd(
             // dL/dWeight (common for K and WB)
             // Derivative of (num/den) w.r.t weight_i is: (V_i * den - num) / den^2
             float dW = gO * sigQ * weight * (V[tp * D + d] - ratio) * den_inv;
-            
+
             atomicAdd(&grad_K[tp * D + d], dW);
             atomicAdd(&grad_WB[t * TEnc + tp], dW); // Note: WB sum is across D
         }
+    }
+}
+
+__global__ void concat_axis1_fwd(float **inputs, float *out, int num_tensors, int rows, int cols_per_tensor)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_cols = num_tensors * cols_per_tensor;
+    int size = rows * total_cols;
+
+    if (i < size)
+    {
+        int r = i / total_cols;
+        int c = i % total_cols;
+        int tensor_idx = c / cols_per_tensor;
+        int local_c = c % cols_per_tensor;
+
+        out[i] = inputs[tensor_idx][r * cols_per_tensor + local_c];
+    }
+}
+
+__global__ void concat_axis1_bwd(float *grad_out, float **grad_inputs, int num_tensors, int rows, int cols_per_tensor)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_cols = num_tensors * cols_per_tensor;
+    int size = rows * total_cols;
+
+    if (i < size)
+    {
+        int r = i / total_cols;
+        int c = i % total_cols;
+        int tensor_idx = c / cols_per_tensor;
+        int local_c = c % cols_per_tensor;
+
+        atomicAdd(&grad_inputs[tensor_idx][r * cols_per_tensor + local_c], grad_out[i]);
+    }
+}
+
+__global__ void layernorm_fwd(float *x, float *gamma, float *beta, float *out, int R, int C, float eps)
+{
+    int i = blockIdx.x; // One row per block
+    if (i < R)
+    {
+        // 1. Calculate Mean
+        float sum = 0;
+        for (int j = 0; j < C; j++)
+            sum += x[i * C + j];
+        float mean = sum / C;
+
+        // 2. Calculate Variance
+        float sq_diff_sum = 0;
+        for (int j = 0; j < C; j++)
+        {
+            float diff = x[i * C + j] - mean;
+            sq_diff_sum += diff * diff;
+        }
+        float var = sq_diff_sum / C;
+        float std_inv = 1.0f / sqrtf(var + eps);
+
+        // 3. Normalize and Scale/Shift
+        for (int j = 0; j < C; j++)
+        {
+            float x_hat = (x[i * C + j] - mean) * std_inv;
+            out[i * C + j] = x_hat * gamma[j] + beta[j];
+        }
+    }
+}
+
+__global__ void layernorm_bwd(float *x, float *gamma, float *go, float *gx, float *gGamma, float *gBeta, int R, int C, float eps)
+{
+    int i = blockIdx.x;
+    if (i < R)
+    {
+        // Recalculate stats for the row
+        float sum = 0;
+        for (int j = 0; j < C; j++)
+            sum += x[i * C + j];
+        float mean = sum / C;
+
+        float sq_diff_sum = 0;
+        for (int j = 0; j < C; j++)
+        {
+            float diff = x[i * C + j] - mean;
+            sq_diff_sum += diff * diff;
+        }
+        float std_inv = 1.0f / sqrtf((sq_diff_sum / C) + eps);
+
+        float dl_dxhat_sum = 0;
+        float dl_dxhat_xhat_sum = 0;
+
+        // First pass: Calc gradients for gamma/beta and build sums for input grad
+        for (int j = 0; j < C; j++)
+        {
+            float x_hat = (x[i * C + j] - mean) * std_inv;
+            float dl_dxhat = go[i * C + j] * gamma[j];
+
+            dl_dxhat_sum += dl_dxhat;
+            dl_dxhat_xhat_sum += dl_dxhat * x_hat;
+
+            atomicAdd(&gGamma[j], go[i * C + j] * x_hat);
+            atomicAdd(&gBeta[j], go[i * C + j]);
+        }
+
+        // Second pass: Final gradient for x
+        for (int j = 0; j < C; j++)
+        {
+            float x_hat = (x[i * C + j] - mean) * std_inv;
+            float dl_dxhat = go[i * C + j] * gamma[j];
+            gx[i * C + j] += (std_inv / C) * (C * dl_dxhat - dl_dxhat_sum - x_hat * dl_dxhat_xhat_sum);
+        }
+    }
+}
+
+__global__ void embedding_fwd(int *indices, float *wte, float *wpe, float *out, int T, int D)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < T * D)
+    {
+        int t = idx / D;
+        int d = idx % D;
+        int token_id = indices[t];
+
+        // Sum token embedding and position embedding
+        out[idx] = wte[token_id * D + d] + wpe[t * D + d];
+    }
+}
+
+// Corresponding Backward (Atomic add gradients back to embedding weights)
+__global__ void embedding_bwd(int *indices, float *go, float *gwte, float *gwpe, int T, int D)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < T * D)
+    {
+        int t = idx / D;
+        int d = idx % D;
+        int token_id = indices[t];
+
+        atomicAdd(&gwte[token_id * D + d], go[idx]);
+        atomicAdd(&gwpe[t * D + d], go[idx]);
+    }
+}
+
+__global__ void cross_entropy_fwd(float *logits, int *targets, float *loss, int T, int V)
+{
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t < T)
+    {
+        // 1. Find max for numerical stability
+        float max_val = -1e30f;
+        for (int v = 0; v < V; v++)
+        {
+            if (logits[t * V + v] > max_val)
+                max_val = logits[t * V + v];
+        }
+
+        // 2. Compute Log-Sum-Exp
+        float lse = 0.0f;
+        for (int v = 0; v < V; v++)
+        {
+            lse += expf(logits[t * V + v] - max_val);
+        }
+        lse = max_val + logf(lse);
+
+        // 3. Loss = logsumexp(logits) - logits[target]
+        int target_idx = targets[t];
+        loss[t] = lse - logits[t * V + target_idx];
+    }
+}
+
+__global__ void cross_entropy_bwd(float *logits, int *targets, float *grad_logits, int T, int V, float grad_output)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < T * V)
+    {
+        int t = idx / V;
+        int v = idx % V;
+        int target_idx = targets[t];
+
+        // Recompute softmax for the gradient
+        float max_val = -1e30f;
+        for (int i = 0; i < V; i++)
+            if (logits[t * V + i] > max_val)
+                max_val = logits[t * V + i];
+
+        float sum = 0.0f;
+        for (int i = 0; i < V; i++)
+            sum += expf(logits[t * V + i] - max_val);
+
+        float softmax = expf(logits[idx] - max_val) / sum;
+
+        // Gradient of Cross Entropy: Softmax(logits) - 1(if v == target)
+        float indicator = (v == target_idx) ? 1.0f : 0.0f;
+        grad_logits[idx] = (softmax - indicator) * (grad_output / T);
+    }
+}
+
+__global__ void adam_kernel(float *p, float *g, float *m, float *v,
+                            int size, int t, float lr,
+                            float b1, float b2, float eps)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size)
+    {
+        // Update biased moments
+        m[i] = b1 * m[i] + (1.0f - b1) * g[i];
+        v[i] = b2 * v[i] + (1.0f - b2) * (g[i] * g[i]);
+
+        // Bias correction
+        float m_hat = m[i] / (1.0f - powf(b1, t));
+        float v_hat = v[i] / (1.0f - powf(b2, t));
+
+        // Update parameters
+        p[i] -= lr * m_hat / (sqrtf(v_hat) + eps);
     }
 }
 
@@ -314,7 +557,15 @@ extern "C"
             cudaMemcpy(t->data_gpu, d, t->size * sizeof(float), cudaMemcpyHostToDevice);
         return (void *)t;
     }
-    DLLEXPORT void destroy_tensor(void *h) { delete (Tensor *)h; }
+    DLLEXPORT void destroy_tensor(void *h)
+    {
+        if (!h)
+            return;
+        Tensor *t = (Tensor *)h;
+        cudaFree(t->data_gpu);
+        cudaFree(t->grad_gpu);
+        delete t; // Delete the struct itself
+    }
     DLLEXPORT void get_tensor_data(void *h, float *b)
     {
         Tensor *t = (Tensor *)h;
@@ -421,6 +672,22 @@ extern "C"
         { relu_bwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, out->grad_gpu, a->grad_gpu, a->size); };
         return (void *)out;
     }
+
+    DLLEXPORT void *gelu_tensor(void *ah)
+    {
+        Tensor *a = (Tensor *)ah;
+        Tensor *out = new Tensor(a->rows, a->cols);
+        out->_children = {a};
+
+        gelu_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, out->data_gpu, a->size);
+
+        out->_backward = [out, a]()
+        {
+            gelu_bwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, out->grad_gpu, a->grad_gpu, a->size);
+        };
+
+        return (void *)out;
+    }
     DLLEXPORT void *sigmoid_tensor(void *ah)
     {
         Tensor *a = (Tensor *)ah;
@@ -468,6 +735,60 @@ extern "C"
         };
         return (void *)out;
     }
+    __global__ void aft_full_bwd(
+        float *Q, float *K, float *V, float *WB,
+        float *grad_out,
+        float *grad_Q, float *grad_K, float *grad_V, float *grad_WB,
+        int T, int D, bool masked)
+    {
+        int t = blockIdx.x * blockDim.x + threadIdx.x;
+        if (t >= T)
+            return;
+
+        for (int d = 0; d < D; d++)
+        {
+            // Re-calculate sum components for this row/dim
+            float num = 0.0f;
+            float den = 0.0f;
+            int limit = masked ? (t + 1) : T;
+
+            for (int tp = 0; tp < limit; tp++)
+            {
+                float weight = expf(K[tp * D + d] + WB[t * T + tp]);
+                num += weight * V[tp * D + d];
+                den += weight;
+            }
+
+            float den_inv = 1.0f / (den + 1e-9f);
+            float ratio = num * den_inv;
+
+            // Sigmoid derivative for Q
+            float sigQ = 1.0f / (1.0f + expf(-Q[t * D + d]));
+            float dSigQ = sigQ * (1.0f - sigQ);
+
+            float gO = grad_out[t * D + d];
+
+            // 1. Gradient for Q
+            atomicAdd(&grad_Q[t * D + d], gO * ratio * dSigQ);
+
+            // 2. Gradients for K, V, and WB
+            for (int tp = 0; tp < limit; tp++)
+            {
+                float weight = expf(K[tp * D + d] + WB[t * T + tp]);
+
+                // dL/dV
+                float dV = gO * sigQ * (weight * den_inv);
+                atomicAdd(&grad_V[tp * D + d], dV);
+
+                // dL/dWeight (affects both K and WB)
+                // quotient rule: (V_i * den - num) / den^2
+                float dW = gO * sigQ * weight * (V[tp * D + d] - ratio) * den_inv;
+
+                atomicAdd(&grad_K[tp * D + d], dW);
+                atomicAdd(&grad_WB[t * T + tp], dW);
+            }
+        }
+    }
 
     DLLEXPORT void *aft_forward(void *qh, void *kh, void *vh, void *wbh, bool masked)
     {
@@ -480,28 +801,193 @@ extern "C"
 
         aft_full_fwd<<<(T + 255) / 256, 256>>>(Q->data_gpu, K->data_gpu, V->data_gpu, WB->data_gpu, out->data_gpu, T, D, masked);
 
-        // Note: AFT Backward is complex and usually requires a custom kernel as well.
-        // For now, we focus on getting the Forward pass running on GPU.
+        // Register the backward lambda for autograd
+        out->_backward = [out, Q, K, V, WB, T, D, masked]()
+        {
+            aft_full_bwd<<<(T + 255) / 256, 256>>>(
+                Q->data_gpu, K->data_gpu, V->data_gpu, WB->data_gpu,
+                out->grad_gpu,
+                Q->grad_gpu, K->grad_gpu, V->grad_gpu, WB->grad_gpu,
+                T, D, masked);
+        };
+
         return (void *)out;
     }
 
-    DLLEXPORT void* aft_cross_forward(void* qh, void* kh, void* vh, void* wbh) {
-        Tensor *Q = (Tensor*)qh, *K = (Tensor*)kh, *V = (Tensor*)vh, *WB = (Tensor*)wbh;
-        Tensor* out = new Tensor(Q->rows, Q->cols);
+    DLLEXPORT void *aft_cross_forward(void *qh, void *kh, void *vh, void *wbh)
+    {
+        Tensor *Q = (Tensor *)qh, *K = (Tensor *)kh, *V = (Tensor *)vh, *WB = (Tensor *)wbh;
+        Tensor *out = new Tensor(Q->rows, Q->cols);
         out->_children = {Q, K, V, WB};
-    
+
         int TDec = Q->rows, TEnc = K->rows, D = Q->cols;
         aft_cross_fwd<<<(TDec + 255) / 256, 256>>>(Q->data_gpu, K->data_gpu, V->data_gpu, WB->data_gpu, out->data_gpu, TDec, TEnc, D);
-        
+
         // Attach the autograd backward function
-        out->_backward = [out, Q, K, V, WB, TDec, TEnc, D]() {
+        out->_backward = [out, Q, K, V, WB, TDec, TEnc, D]()
+        {
             aft_cross_bwd<<<(TDec + 255) / 256, 256>>>(
-                Q->data_gpu, K->data_gpu, V->data_gpu, WB->data_gpu, 
-                out->grad_gpu, 
-                Q->grad_gpu, K->grad_gpu, V->grad_gpu, WB->grad_gpu, 
-                TDec, TEnc, D
-            );
+                Q->data_gpu, K->data_gpu, V->data_gpu, WB->data_gpu,
+                out->grad_gpu,
+                Q->grad_gpu, K->grad_gpu, V->grad_gpu, WB->grad_gpu,
+                TDec, TEnc, D);
         };
-        return (void*)out;
+        return (void *)out;
+    }
+
+    DLLEXPORT void *concat_tensors_gpu(void **handles, int num_tensors)
+    {
+        std::vector<Tensor *> ts;
+        for (int i = 0; i < num_tensors; i++)
+            ts.push_back((Tensor *)handles[i]);
+
+        int rows = ts[0]->rows;
+        int cols_per_t = ts[0]->cols;
+        Tensor *out = new Tensor(rows, cols_per_t * num_tensors);
+
+        // Prepare device pointers for the kernel
+        float **d_inputs;
+        float *h_inputs[num_tensors];
+        for (int i = 0; i < num_tensors; i++)
+            h_inputs[i] = ts[i]->data_gpu;
+        cudaMalloc(&d_inputs, num_tensors * sizeof(float *));
+        cudaMemcpy(d_inputs, h_inputs, num_tensors * sizeof(float *), cudaMemcpyHostToDevice);
+
+        concat_axis1_fwd<<<(out->size + 255) / 256, 256>>>(d_inputs, out->data_gpu, num_tensors, rows, cols_per_t);
+
+        out->_backward = [out, ts, num_tensors, rows, cols_per_t]()
+        {
+            float **d_grads;
+            float *h_grads[num_tensors];
+            for (int i = 0; i < num_tensors; i++)
+                h_grads[i] = ts[i]->grad_gpu;
+            cudaMalloc(&d_grads, num_tensors * sizeof(float *));
+            cudaMemcpy(d_grads, h_grads, num_tensors * sizeof(float *), cudaMemcpyHostToDevice);
+
+            concat_axis1_bwd<<<(out->size + 255) / 256, 256>>>(out->grad_gpu, d_grads, num_tensors, rows, cols_per_t);
+            cudaFree(d_grads);
+        };
+
+        out->_children = ts;
+        return (void *)out;
+    }
+    DLLEXPORT void *layernorm_forward(void *xh, void *gh, void *bh, float eps)
+    {
+        Tensor *x = (Tensor *)xh, *gamma = (Tensor *)gh, *beta = (Tensor *)bh;
+        Tensor *out = new Tensor(x->rows, x->cols);
+        out->_children = {x, gamma, beta};
+
+        layernorm_fwd<<<x->rows, 1>>>(x->data_gpu, gamma->data_gpu, beta->data_gpu, out->data_gpu, x->rows, x->cols, eps);
+
+        // Added 'beta' to the capture list below [out, x, gamma, beta, eps]
+        out->_backward = [out, x, gamma, beta, eps]()
+        {
+            layernorm_bwd<<<x->rows, 1>>>(
+                x->data_gpu,
+                gamma->data_gpu,
+                out->grad_gpu,
+                x->grad_gpu,
+                gamma->grad_gpu,
+                beta->grad_gpu, // Now beta is accessible
+                x->rows,
+                x->cols,
+                eps);
+        };
+        return (void *)out;
+    }
+
+    DLLEXPORT void *embedding_forward(int *h_indices, void *wteh, void *wpeh, int T, int D)
+    {
+        Tensor *wte = (Tensor *)wteh, *wpe = (Tensor *)wpeh;
+        Tensor *out = new Tensor(T, D);
+        out->_children = {wte, wpe};
+
+        // Allocate and copy indices to GPU
+        int *d_indices;
+        cudaMalloc(&d_indices, T * sizeof(int));
+        cudaMemcpy(d_indices, h_indices, T * sizeof(int), cudaMemcpyHostToDevice);
+
+        int total = T * D;
+        // Now T and D are correctly used to define the grid
+        embedding_fwd<<<(total + 255) / 256, 256>>>(d_indices, wte->data_gpu, wpe->data_gpu, out->data_gpu, T, D);
+
+        out->_backward = [out, wte, wpe, d_indices, T, D]()
+        {
+            int total = T * D;
+            embedding_bwd<<<(total + 255) / 256, 256>>>(d_indices, out->grad_gpu, wte->grad_gpu, wpe->grad_gpu, T, D);
+
+            // Clean up indices after backward
+            cudaFree(d_indices);
+        };
+
+        return (void *)out;
+    }
+
+    DLLEXPORT void *cross_entropy_loss(void *lh, int *h_targets, int T, int V)
+    {
+        Tensor *logits = (Tensor *)lh;
+        Tensor *out = new Tensor(1, 1); // Scalar loss
+        out->_children = {logits};
+
+        // Move targets to GPU
+        int *d_targets;
+        cudaMalloc(&d_targets, T * sizeof(int));
+        cudaMemcpy(d_targets, h_targets, T * sizeof(int), cudaMemcpyHostToDevice);
+
+        float *d_losses;
+        cudaMalloc(&d_losses, T * sizeof(float));
+
+        cross_entropy_fwd<<<(T + 255) / 256, 256>>>(logits->data_gpu, d_targets, d_losses, T, V);
+
+        // Sum losses on CPU for the scalar result (simple for now)
+        std::vector<float> h_losses(T);
+        cudaMemcpy(h_losses.data(), d_losses, T * sizeof(float), cudaMemcpyDeviceToHost);
+        float total_loss = 0;
+        for (float l : h_losses)
+            total_loss += l;
+        total_loss /= T;
+
+        cudaMemcpy(out->data_gpu, &total_loss, sizeof(float), cudaMemcpyHostToDevice);
+
+        out->_backward = [out, logits, d_targets, T, V]()
+        {
+            float h_grad_out;
+            cudaMemcpy(&h_grad_out, out->grad_gpu, sizeof(float), cudaMemcpyDeviceToHost);
+
+            cross_entropy_bwd<<<(T * V + 255) / 256, 256>>>(
+                logits->data_gpu, d_targets, logits->grad_gpu, T, V, h_grad_out);
+            cudaFree(d_targets);
+        };
+
+        cudaFree(d_losses);
+        return (void *)out;
+    }
+
+    DLLEXPORT void tensor_to_host(void *handle, float *h_data)
+    {
+        Tensor *t = (Tensor *)handle;
+        int size = t->rows * t->cols;
+        // Copy from GPU data pointer to the pointer provided by Dart
+        cudaMemcpy(h_data, t->data_gpu, size * sizeof(float), cudaMemcpyDeviceToHost);
+    }
+
+    DLLEXPORT void adam_step(void *ph, void *mh, void *vh, int t,
+                             float lr, float b1, float b2, float eps)
+    {
+        Tensor *p = (Tensor *)ph;
+        Tensor *m = (Tensor *)mh;
+        Tensor *v = (Tensor *)vh;
+
+        int size = p->rows * p->cols;
+        int threads = 256;
+        int blocks = (size + threads - 1) / threads;
+
+        // Launch the Adam kernel
+        adam_kernel<<<blocks, threads>>>(
+            p->data_gpu, p->grad_gpu, m->data_gpu, v->data_gpu,
+            size, t, lr, b1, b2, eps);
+
+        // Ensure the GPU finishes the update before Dart continues
+        cudaDeviceSynchronize();
     }
 }
