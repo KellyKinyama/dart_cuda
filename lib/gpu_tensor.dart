@@ -186,6 +186,10 @@ typedef DartComputeCost =
       ffi.Pointer<ffi.Void>,
     );
 
+// Unary operations for reductions (collapsing a tensor to a 1x1 scalar)
+typedef _C_reduce = ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
+typedef _D_reduce = ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
+
 class CudaEngine {
   late ffi.DynamicLibrary _lib;
   late _D_create createTensor;
@@ -220,6 +224,8 @@ class CudaEngine {
   late UnaryOpDart abs_tensor;
   late UnaryOpDart softmax_forward;
   late DartComputeCost _computeCostMatrix; // <--- The internal definition
+  late _D_reduce sumTensor;
+  late _D_reduce meanTensor;
 
   CudaEngine() {
     _lib = ffi.DynamicLibrary.open(Directory.current.path + '/libmatmul.so');
@@ -292,6 +298,16 @@ class CudaEngine {
     _computeCostMatrix = _lib
         .lookup<ffi.NativeFunction<NativeComputeCost>>('compute_cost_matrix')
         .asFunction<DartComputeCost>();
+
+    sumTensor = _lib.lookupFunction<_C_reduce, _D_reduce>('sum_tensor');
+
+    // Mean reduction: returns a 1x1 Tensor pointer
+    meanTensor = _lib.lookupFunction<_C_reduce, _D_reduce>('mean_tensor');
+
+    // Ensure your existing slice and unary ops are there
+    // sliceTensor = _lib.lookupFunction<_C_slice, _D_slice>('slice_tensor');
+    // abs_tensor = _lib.lookupFunction<UnaryOpFn, UnaryOpDart>('abs_tensor');
+    // softmax_forward = _lib.lookupFunction<UnaryOpFn, UnaryOpDart>('softmax_forward');
   }
 
   void computeCostMatrix(
@@ -357,6 +373,17 @@ class Tensor {
   void zeroGrad() => engine.zeroGrad(_handle);
   void step(double lr) => engine.tensorStep(_handle, lr);
   void backward() => engine.backward(_handle);
+
+  Tensor sum() {
+    final h = engine.sumTensor(this.handle);
+    return Tensor._raw(h, [1, 1]);
+  }
+
+  /// Collapses the entire tensor into a 1x1 Tensor containing the mean
+  Tensor mean() {
+    final h = engine.meanTensor(this.handle);
+    return Tensor._raw(h, [1, 1]);
+  }
 
   // Tensor operator +(Tensor o) =>
   //     Tensor._raw(engine.addTensors(_handle, o._handle), shape);
@@ -630,6 +657,20 @@ class Tensor {
     engine.computeCostMatrix(this.handle, gtBoxes.handle, costMatrix.handle);
 
     return costMatrix;
+  }
+
+  Tensor slice(int startRow, int rowCount) {
+    // 1. Safety check
+    if (startRow < 0 || (startRow + rowCount) > shape[0]) {
+      throw RangeError("Slice indices out of bounds for shape $shape");
+    }
+
+    // 2. Call the engine (same one used by getRow)
+    // startRow: where to begin, rowCount: how many rows to take
+    final handle = engine.sliceTensor(_handle, startRow, rowCount);
+
+    // 3. Return as a new Tensor (usually a unique handle in C++)
+    return Tensor._raw(handle, [rowCount, shape[1]], isView: false);
   }
 
   bool _isDisposed = false;

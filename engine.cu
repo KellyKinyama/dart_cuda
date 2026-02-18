@@ -600,6 +600,49 @@ __global__ void compute_cost_matrix_kernel(
     }
 }
 
+// --- Reduction Kernels ---
+
+__global__ void sum_fwd_kernel(float *a, float *out, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+    {
+        // Atomically add each element to the first slot of the output
+        atomicAdd(out, a[i]);
+    }
+}
+
+__global__ void sum_bwd_kernel(float *grad_out, float *grad_a, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+    {
+        // The gradient of a sum is 1.0.
+        // We multiply the incoming gradient (grad_out[0]) by 1.0 and pass it back.
+        atomicAdd(&grad_a[i], grad_out[0]);
+    }
+}
+
+__global__ void mean_fwd_kernel(float *a, float *out, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+    {
+        // Add (value / n) to the output to get the mean
+        atomicAdd(out, a[i] / (float)n);
+    }
+}
+
+__global__ void mean_bwd_kernel(float *grad_out, float *grad_a, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+    {
+        // The gradient of mean(x) is 1/n.
+        atomicAdd(&grad_a[i], grad_out[0] / (float)n);
+    }
+}
+
 extern "C"
 {
 
@@ -1235,17 +1278,61 @@ extern "C"
         return (void *)out;
     }
 
-    DLLEXPORT void compute_cost_matrix(void *pb_h, void *gb_h, void *cm_h) {
+    DLLEXPORT void compute_cost_matrix(void *pb_h, void *gb_h, void *cm_h)
+    {
         Tensor *pb = (Tensor *)pb_h;
         Tensor *gb = (Tensor *)gb_h;
         Tensor *cm = (Tensor *)cm_h;
-    
+
         dim3 threads(16, 16);
         dim3 blocks((gb->rows + 15) / 16, (pb->rows + 15) / 16);
-    
+
         compute_cost_matrix_kernel<<<blocks, threads>>>(
-            pb->data_gpu, gb->data_gpu, cm->data_gpu, pb->rows, gb->rows
-        );
+            pb->data_gpu, gb->data_gpu, cm->data_gpu, pb->rows, gb->rows);
         cudaDeviceSynchronize();
+    }
+
+    DLLEXPORT void *sum_tensor(void *ah)
+    {
+        Tensor *a = (Tensor *)ah;
+        // Result is always a 1x1 tensor
+        Tensor *out = new Tensor(1, 1);
+        out->_children = {a};
+
+        // Initialize output memory to zero before reduction
+        cudaMemset(out->data_gpu, 0, sizeof(float));
+
+        int threads = 256;
+        int blocks = (a->size + threads - 1) / threads;
+
+        sum_fwd_kernel<<<blocks, threads>>>(a->data_gpu, out->data_gpu, a->size);
+
+        out->_backward = [out, a, blocks, threads]()
+        {
+            sum_bwd_kernel<<<blocks, threads>>>(out->grad_gpu, a->grad_gpu, a->size);
+        };
+
+        return (void *)out;
+    }
+
+    DLLEXPORT void *mean_tensor(void *ah)
+    {
+        Tensor *a = (Tensor *)ah;
+        Tensor *out = new Tensor(1, 1);
+        out->_children = {a};
+
+        cudaMemset(out->data_gpu, 0, sizeof(float));
+
+        int threads = 256;
+        int blocks = (a->size + threads - 1) / threads;
+
+        mean_fwd_kernel<<<blocks, threads>>>(a->data_gpu, out->data_gpu, a->size);
+
+        out->_backward = [out, a, blocks, threads]()
+        {
+            mean_bwd_kernel<<<blocks, threads>>>(out->grad_gpu, a->grad_gpu, a->size);
+        };
+
+        return (void *)out;
     }
 }
