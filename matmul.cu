@@ -24,6 +24,28 @@ __global__ void matrixMulKernel(float* A, float* B, float* C, int M, int N, int 
     }
 }
 
+__global__ void l2NormalizeKernel(float* data, int rows, int cols, float epsilon) {
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < rows) {
+        float sum_sq = 0.0f;
+        
+        // 1. Calculate squared sum for the row
+        for (int i = 0; i < cols; ++i) {
+            float val = data[row * cols + i];
+            sum_sq += val * val;
+        }
+
+        // 2. Calculate the norm (with epsilon safety)
+        float norm = sqrtf(sum_sq + epsilon);
+
+        // 3. Divide elements by the norm
+        for (int i = 0; i < cols; ++i) {
+            data[row * cols + i] /= norm;
+        }
+    }
+}
+
 /**
  * @brief C-style wrapper function that Dart FFI will call.
  */

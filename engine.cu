@@ -8,6 +8,47 @@
 
 #define DLLEXPORT __attribute__((visibility("default")))
 
+
+__global__ void l2_normalize_fwd(float *a, float *out, int R, int C, float eps) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < R) {
+        float sum_sq = 0.0f;
+        for (int j = 0; j < C; j++) {
+            float val = a[i * C + j];
+            sum_sq += val * val;
+        }
+        float norm = sqrtf(sum_sq + eps);
+        for (int j = 0; j < C; j++) {
+            out[i * C + j] = a[i * C + j] / norm;
+        }
+    }
+}
+
+__global__ void l2_normalize_bwd(float *a, float *go, float *ga, int R, int C, float eps) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < R) {
+        float sum_sq = 0.0f;
+        for (int j = 0; j < C; j++) {
+            float val = a[i * C + j];
+            sum_sq += val * val;
+        }
+        float norm_sq = sum_sq + eps;
+        float norm = sqrtf(norm_sq);
+        float norm_cubed = norm_sq * norm;
+
+        float dot_product = 0.0f;
+        for (int j = 0; j < C; j++) {
+            dot_product += a[i * C + j] * go[i * C + j];
+        }
+
+        for (int j = 0; j < C; j++) {
+            // Formula: (grad_out / norm) - (a * dot_product / norm^3)
+            float grad = (go[i * C + j] / norm) - (a[i * C + j] * dot_product / norm_cubed);
+            atomicAdd(&ga[i * C + j], grad);
+        }
+    }
+}
+
 // --- Global Kernels (Must be outside functions) ---
 __global__ void add_fwd(float *a, float *b, float *out, int n)
 {
@@ -1432,5 +1473,29 @@ extern "C"
         Tensor* p = (Tensor*)ph;
         int size = p->rows * p->cols;
         cudaMemset(p->data_gpu, 0, size * sizeof(float));
+    }
+
+
+    DLLEXPORT void *l2_normalize_tensor(void *ah, float eps) {
+        Tensor *a = (Tensor *)ah;
+        int R = a->rows;
+        int C = a->cols;
+        Tensor *out = new Tensor(R, C);
+        out->_children = {a};
+    
+        int threads = 256;
+        int blocks = (R + threads - 1) / threads;
+    
+        l2_normalize_fwd<<<blocks, threads>>>(a->data_gpu, out->data_gpu, R, C, eps);
+    
+        out->_backward = [out, a, R, C, eps, blocks, threads]() {
+            l2_normalize_bwd<<<blocks, threads>>>(
+                a->data_gpu, 
+                out->grad_gpu, 
+                a->grad_gpu, 
+                R, C, eps
+            );
+        };
+        return (void *)out;
     }
 }

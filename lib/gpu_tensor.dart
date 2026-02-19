@@ -196,6 +196,12 @@ typedef _XavierInitDart = void Function(ffi.Pointer<ffi.Void>, int, int, int);
 typedef _ZeroInitC = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _ZeroInitDart = void Function(ffi.Pointer<ffi.Void>);
 
+// --- Add these Typedefs at the top level ---
+typedef _C_l2norm =
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Float);
+typedef _D_l2norm =
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, double);
+
 class CudaEngine {
   late ffi.DynamicLibrary _lib;
   late _D_create createTensor;
@@ -234,9 +240,10 @@ class CudaEngine {
   late _D_reduce meanTensor;
   late _ZeroInitDart _tensorZeroInit;
   late _XavierInitDart _tensorXavierInit;
+  late _D_l2norm l2Normalize; // Add this
 
   CudaEngine() {
-    _lib = ffi.DynamicLibrary.open('${Directory.current.path}/libmatmul_v2.so');
+    _lib = ffi.DynamicLibrary.open('${Directory.current.path}/libmatmul.so');
     createTensor = _lib.lookupFunction<_C_create, _D_create>('create_tensor');
     destroyTensor = _lib.lookupFunction<_C_destroy, _D_destroy>(
       'destroy_tensor',
@@ -319,10 +326,10 @@ class CudaEngine {
     _tensorZeroInit = _lib.lookupFunction<_ZeroInitC, _ZeroInitDart>(
       'tensor_zero_init',
     );
-    // Ensure your existing slice and unary ops are there
-    // sliceTensor = _lib.lookupFunction<_C_slice, _D_slice>('slice_tensor');
-    // abs_tensor = _lib.lookupFunction<UnaryOpFn, UnaryOpDart>('abs_tensor');
-    // softmax_forward = _lib.lookupFunction<UnaryOpFn, UnaryOpDart>('softmax_forward');
+
+    l2Normalize = _lib.lookupFunction<_C_l2norm, _D_l2norm>(
+      'l2_normalize_tensor',
+    );
   }
 
   void computeCostMatrix(
@@ -345,9 +352,6 @@ class Tensor {
 
   Tensor._raw(this._handle, this.shape, {this.isView = false})
     : length = shape.reduce((a, b) => a * b);
-
-  // Manual Dispose
-  // void dispose() => engine.destroyTensor(_handle);
 
   ffi.Pointer<ffi.Void> get handle => _handle;
 
@@ -400,25 +404,6 @@ class Tensor {
     return Tensor._raw(h, [1, 1]);
   }
 
-  // void xavier(int nIn, int nOut) {
-  //   // Use current time as seed so every training run is unique
-  //   int seed = DateTime.now().millisecondsSinceEpoch;
-
-  //   // FFI call to the C++ wrapper
-  // engine.tensorXavierInit(
-  //     this.handle, // Assuming this is your Pointer to the C++ Tensor object
-  //     nIn,
-  //     nOut,
-  //     seed,
-  //   );
-  // }
-
-  // Tensor operator +(Tensor o) =>
-  //     Tensor._raw(engine.addTensors(_handle, o._handle), shape);
-  // Tensor operator -(Tensor o) =>
-  //     Tensor._raw(engine.subTensors(_handle, o._handle), shape);
-  // Tensor operator *(Tensor o) =>
-  //     Tensor._raw(engine.mulTensors(_handle, o._handle), shape);
   Tensor matmul(Tensor o) => Tensor._raw(
     engine.matmulTensors(_handle, o._handle),
     [shape[0], o.shape[1]],
@@ -449,7 +434,9 @@ class Tensor {
   // Fixed Operators
   Tensor operator +(dynamic o) => _scalarOp(o, engine.addTensors);
   Tensor operator -(dynamic o) => _scalarOp(o, engine.subTensors);
-  Tensor operator *(dynamic o) => _scalarOp(o, engine.mulTensors);
+  Tensor operator *(dynamic o) =>
+      _scalarOp(o, engine.mulTensors); // New Division Operator
+  Tensor operator /(dynamic o) => _scalarOp(o, engine.divTensors);
 
   // Cross Entropy Implementation
   Tensor computeCrossEntropy(Tensor pred, Tensor target, List<Tensor> tracker) {
@@ -467,6 +454,11 @@ class Tensor {
     tracker.addAll([logPred, product, negOne]);
 
     return loss;
+  }
+
+  Tensor relu() {
+    final h = engine.reluTensor(_handle);
+    return Tensor._raw(h, shape);
   }
 
   Tensor abs() {
@@ -713,14 +705,26 @@ class Tensor {
     _isDisposed = true;
   }
 
-  // final bool isView; // New field
+  static Tensor l2Normalize(
+    Tensor input,
+    List<Tensor> tracker, {
+    double eps = 1e-12,
+  }) {
+    final xSq = input.pow(2.0);
+    final sumSq = xSq.sum();
+    final norm = sumSq.pow(0.5) + eps;
+    final result = input / norm;
 
-  // Tensor._raw(this._handle, this.shape, {this.isView = false});
+    // Track everything so backward() can see the math
+    tracker.addAll([xSq, sumSq, norm, result]);
 
-  // Tensor reshape(List<int> newShape) {
-  //   // Mark this one as a view so it doesn't double-free
-  //   return Tensor._raw(this._handle, newShape, isView: true);
-  // }
+    return result;
+  }
+
+  Tensor normalize({double eps = 1e-12}) {
+    final h = engine.l2Normalize(_handle, eps);
+    return Tensor._raw(h, shape);
+  }
 }
 
 void main() {
