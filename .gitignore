@@ -3,3 +3,4 @@
 .dart_tool/
 tiny_shakespeare.txt
 shakespeare_gpt.bin
+chess_gpt.bin
