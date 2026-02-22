@@ -23,7 +23,7 @@ class VideoTransformer extends Module {
     int numLayers = 2,
     int numHeads = 4,
   }) : frameProjection = (frameEmbedDim != embedSize)
-           ? Layer(frameEmbedDim, embedSize)
+           ? Layer(frameEmbedDim, embedSize, useGelu: false)
            : null,
        posEmbeddings = Tensor.random([maxVideoSequenceLength, embedSize]),
        transformerEncoder = TransformerEncoder(
@@ -33,7 +33,7 @@ class VideoTransformer extends Module {
          numLayers: numLayers,
          numHeads: numHeads,
        ),
-       mlpHead = Layer(embedSize, numClasses);
+       mlpHead = Layer(embedSize, numClasses, useGelu: false);
 
   /// Forward pass on the GPU
   Tensor forward(Tensor videoEmbeddings, List<Tensor> tracker) {
