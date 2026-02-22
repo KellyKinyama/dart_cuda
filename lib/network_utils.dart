@@ -23,25 +23,31 @@ Future<void> saveModuleBinary(Module module, String filePath) async {
   );
 }
 
-/// Loads weights from a flat binary file and pushes them to the GPU.
-Future<void> loadModuleBinary(Module module, String filePath) async {
+/// Reads a binary file and pushes the weights into GPU VRAM
+Future<bool> loadModuleBinary(Module model, String filePath) async {
   final file = File(filePath);
-  if (!await file.exists()) return print('Error: Binary file not found');
+  if (!await file.exists()) return false;
 
   final Uint8List allBytes = await file.readAsBytes();
   final Float32List allFloats = allBytes.buffer.asFloat32List();
-  final List<Tensor> params = module.parameters();
+  final List<Tensor> params = model.parameters();
 
+  // Safety Check
+  final int totalExpected = params.fold(0, (sum, p) => sum + p.length);
+  if (allFloats.length != totalExpected) {
+    print(
+      '⚠️ Mismatch! Model needs $totalExpected floats, file has ${allFloats.length}',
+    );
+    return false;
+  }
+
+  print('🚀 Injecting weights into GPU VRAM...');
   int offset = 0;
   for (var p in params) {
-    // Extract the slice of floats belonging to this specific tensor
     final int len = p.length;
-    final List<double> weightSlice = allFloats.sublist(offset, offset + len);
-
-    // Push to GPU using your 'set data' setter
-    p.data = weightSlice;
-
+    // p.data (setter) triggers engine.setTensorData -> cudaMemcpyHostToDevice
+    p.data = allFloats.sublist(offset, offset + len).toList();
     offset += len;
   }
-  print('🚀 Binary weights injected into GPU memory.');
+  return true;
 }

@@ -1,9 +1,10 @@
 import 'dart:math' as math;
-import 'dart:io';
-import 'dart:typed_data';
+import 'dart:math';
 import 'package:dart_cuda/adam.dart';
 import 'package:dart_cuda/aft_transformer_decoder.dart';
+import 'package:dart_cuda/dataset/dataset.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/network_utils.dart';
 
 // --- CHESS UTILITIES ---
 
@@ -36,47 +37,70 @@ void main() async {
   const int vocabSize = 4098;
   const int bigSize = 16; // SHRUNK: From 128 to 16 (Minimum for 4 heads)
   const int blockSize =
-      8; // SHRUNK: From 16 to 8 (Your games are only 6 tokens long)
+      16; // SHRUNK: From 16 to 8 (Your games are only 6 tokens long)
 
   final gpt = TransformerDecoder(
     vocabSize: vocabSize,
     embedSize: bigSize,
     encoderEmbedSize: bigSize,
-    numLayers: 1, // SHRUNK: From 4 to 1
-    numHeads: 2, // SHRUNK: From 4 to 2
+    numLayers: 2, // SHRUNK: From 4 to 1
+    numHeads: 4, // SHRUNK: From 4 to 2
     blockSize: blockSize,
   );
 
   // 1. STANDARD INITIALIZATION
   // 0.02 is the gold standard for Transformers. Since your C++ engine is now
   // numerically stable, we can use a stronger starting signal.
-  final rand = math.Random();
-  for (var p in gpt.parameters()) {
-    // MUCH smaller scale. We want the model to start almost "blank"
-    p.data = List.generate(
-      p.length,
-      (_) => (rand.nextDouble() * 2 - 1) * 0.0001,
-    );
-  }
+  // final rand = math.Random();
+  // for (var p in gpt.parameters()) {
+  //   // MUCH smaller scale. We want the model to start almost "blank"
+  //   p.data = List.generate(
+  //     p.length,
+  //     (_) => (rand.nextDouble() * 2 - 1) * 0.0001,
+  //   );
+  // }
+  const String weightPath = 'chess_gpt.bin';
 
+  // 1. Try to restore previous state
+  bool isLoaded = await loadModuleBinary(gpt, weightPath);
+
+  // if (!isLoaded) {
+  //   print("No existing weights found. Starting fresh training...");
+  // }
   // 2. OPTIMIZER
   // Using the new Adam kernel with Weight Decay (handled on C++ side)
   final optimizer = Adam(gpt.parameters(), lr: 0.001);
   final dummyEnc = Tensor.zeros([1, bigSize]);
 
-  final dataset = [
-    ["<start>", "e2e4", "e7e5", "g1f3", "b8c6", "."],
-    ["<start>", "d2d4", "d7d5", "c2c4", "e7e6", "."],
-  ].map((seq) => seq.map(encodeMove).toList()).toList();
+  // final dataset = [
+  //   ["<start>", "e2e4", "e7e5", "g1f3", "b8c6", "."],
+  //   ["<start>", "d2d4", "d7d5", "c2c4", "e7e6", "."],
+  // ].map((seq) => seq.map(encodeMove).toList()).toList();
+
+  List<List<String>> pgnGames = dataset;
+
+  // Add the <start> and <end> tokens to every game for the model
+  final List<List<int>> encodedDataset = pgnGames.map((game) {
+    return [encodeMove("<start>"), ...game.map(encodeMove), encodeMove(".")];
+  }).toList();
 
   print("🚀 Training... (Stable LSE kernels active)");
 
-  for (int epoch = 0; epoch <= 500; epoch++) {
-    double epochLoss = 0;
+  int batchSize = 32;
 
-    for (var seq in dataset) {
+  for (int epoch = 0; epoch <= 1000; epoch++) {
+    double epochLoss = 0;
+    int sequencesProcessed = 0;
+
+    for (var seq in encodedDataset) {
       List<Tensor> tracker = [];
       optimizer.zeroGrad();
+
+      var fullSeq = encodedDataset[Random().nextInt(encodedDataset.length - 1)];
+      final seq = fullSeq.length > blockSize + 1
+          ? fullSeq.sublist(0, blockSize + 1)
+          : fullSeq;
+      // seq = seq.length > blockSize + 1 ? seq.sublist(0, blockSize + 1) : seq;
 
       final x = seq.sublist(0, seq.length - 1);
       final y = seq.sublist(1);
@@ -94,15 +118,22 @@ void main() async {
         epochLoss += lossVal;
       }
 
-      for (var t in tracker) t.dispose();
+      for (var t in tracker) {
+        t.dispose();
+      }
       loss.dispose();
       logits.dispose();
+
+      if (sequencesProcessed > batchSize) break;
+      sequencesProcessed++;
     }
 
-    if (epoch % 50 == 0) {
+    if (epoch % 10 == 0) {
       print(
         "Epoch $epoch | Loss: ${(epochLoss / dataset.length).toStringAsFixed(6)}",
       );
+      // 2. Save the weights so we don't have to train again
+      await saveModuleBinary(gpt, weightPath);
     }
   }
 

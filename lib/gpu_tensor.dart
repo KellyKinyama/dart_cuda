@@ -230,6 +230,7 @@ class CudaEngine {
   late _D_loss crossEntropyLoss; // Add this line
   late _D_to_host tensorToHost;
   late _D_adam_step adamStep;
+  late _D_adam_step sdgStep;
   late _D_clip clipGradients;
   late _D_set_data setTensorData;
   late _D_slice sliceTensor;
@@ -288,7 +289,7 @@ class CudaEngine {
     );
 
     adamStep = _lib.lookupFunction<_C_adam_step, _D_adam_step>('adam_step');
-
+    sdgStep = _lib.lookupFunction<_C_adam_step, _D_adam_step>('sdg_step');
     // Ensure you also have zeroGrad defined
     zeroGrad = _lib
         .lookupFunction<
@@ -344,11 +345,16 @@ class CudaEngine {
 final engine = CudaEngine();
 
 class Tensor {
-  final ffi.Pointer<ffi.Void> _handle;
-  final List<int> shape;
-  final int length;
+  late final ffi.Pointer<ffi.Void> _handle;
+  late final List<int> shape;
+  late final int length;
+  // Set<Tensor>? children = {};
 
   bool? isView; // New field
+
+  // Tensor(this.shape, {this.children}) {
+  //   // return Tensor._raw(this._handle, this.shape, {this.isView = false});
+  // }
 
   Tensor._raw(this._handle, this.shape, {this.isView = false})
     : length = shape.reduce((a, b) => a * b);
@@ -359,7 +365,9 @@ class Tensor {
 
   factory Tensor.fill(List<int> shape, double val) {
     final ptr = calloc<ffi.Float>(shape.reduce((a, b) => a * b));
-    for (int i = 0; i < shape.reduce((a, b) => a * b); i++) ptr[i] = val;
+    for (int i = 0; i < shape.reduce((a, b) => a * b); i++) {
+      ptr[i] = val;
+    }
     final h = engine.createTensor(
       shape[0],
       shape.length > 1 ? shape[1] : 1,
@@ -371,7 +379,9 @@ class Tensor {
 
   factory Tensor.fromList(List<int> shape, List<double> vals) {
     final ptr = calloc<ffi.Float>(vals.length);
-    for (int i = 0; i < vals.length; i++) ptr[i] = vals[i];
+    for (int i = 0; i < vals.length; i++) {
+      ptr[i] = vals[i];
+    }
     final h = engine.createTensor(
       shape[0],
       shape.length > 1 ? shape[1] : 1,
@@ -384,6 +394,14 @@ class Tensor {
   List<double> get data {
     final ptr = calloc<ffi.Float>(length);
     engine.getTensorData(_handle, ptr);
+    final l = ptr.asTypedList(length).toList();
+    calloc.free(ptr);
+    return l;
+  }
+
+  List<double> get grad {
+    final ptr = calloc<ffi.Float>(length);
+    engine.getTensorGrad(_handle, ptr);
     final l = ptr.asTypedList(length).toList();
     calloc.free(ptr);
     return l;
@@ -404,10 +422,21 @@ class Tensor {
     return Tensor._raw(h, [1, 1]);
   }
 
-  Tensor matmul(Tensor o) => Tensor._raw(
-    engine.matmulTensors(_handle, o._handle),
-    [shape[0], o.shape[1]],
-  );
+  Tensor matmul(Tensor o) {
+    int M = shape[0];
+    int K = shape[1];
+    int N = o.shape[1];
+    // print('Matrix multiplcation');
+    if (K != o.shape[0]) {
+      throw ArgumentError("invalid dimensions:A Col: $K, B Rol: ${o.shape[0]}");
+    }
+
+    return Tensor._raw(engine.matmulTensors(_handle, o._handle), [
+      shape[0],
+      o.shape[1],
+    ]);
+  }
+
   Tensor sigmoid() => Tensor._raw(engine.sigmoidTensor(_handle), shape);
   Tensor pow(double e) => Tensor._raw(engine.powTensor(_handle, e), shape);
   Tensor log() => Tensor._raw(engine.logTensor(_handle), shape);
@@ -423,7 +452,26 @@ class Tensor {
       // Create a temporary 1x1 tensor for the scalar value
       final tempScalar = Tensor.fill([1], (other as num).toDouble());
       final resultHandle = opFunc(_handle, tempScalar.handle);
-      tempScalar.dispose(); // Immediately free the temporary scalar handle
+      // tempScalar.dispose(); // Immediately free the temporary scalar handle
+      return Tensor._raw(resultHandle, shape);
+    }
+    throw ArgumentError(
+      "Operation not supported for type ${other.runtimeType}",
+    );
+  }
+
+  Tensor _scalarMultiply(
+    dynamic other,
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Void>)
+    opFunc,
+  ) {
+    if (other is Tensor) {
+      return Tensor._raw(opFunc(_handle, other._handle), shape);
+    } else if (other is double || other is int) {
+      // Create a temporary 1x1 tensor for the scalar value
+      final tempScalar = Tensor.fill([1], (other as num).toDouble());
+      final resultHandle = opFunc(_handle, tempScalar.handle);
+      // tempScalar.dispose(); // Immediately free the temporary scalar handle
       return Tensor._raw(resultHandle, shape);
     }
     throw ArgumentError(
@@ -432,18 +480,101 @@ class Tensor {
   }
 
   // Fixed Operators
-  Tensor operator +(dynamic o) => _scalarOp(o, engine.addTensors);
-  Tensor operator -(dynamic o) => _scalarOp(o, engine.subTensors);
-  Tensor operator *(dynamic o) =>
-      _scalarOp(o, engine.mulTensors); // New Division Operator
-  Tensor operator /(dynamic o) => _scalarOp(o, engine.divTensors);
+  Tensor operator +(dynamic o) {
+    if (o is Tensor) {
+      int M = shape[0];
+      int K = shape[1];
+      int N = o.shape[1];
+      // print('Matrix multiplcation');
+      if (M != o.shape[0] && N != o.shape[1]) {
+        throw ArgumentError(
+          "invalid dimensions:A Col: $K, B Rol: ${o.shape[0]}",
+        );
+      }
+    }
+    return _scalarOp(o, engine.addTensors);
+  }
+
+  Tensor operator -(dynamic o) {
+    // if (o is Tensor && !(o.shape[0] != shape[0] || o.shape[1] != shape[1])) {
+    //   throw UnsupportedError("invalid shape dimension");
+    //   // Reuse multiplication logic with reciprocal
+    //   // return this * (1.0 / other.toDouble());
+    // } else {
+    return _scalarOp(o, engine.subTensors);
+    // }
+  }
+
+  Tensor operator -() {
+    final left = Tensor.fromList(shape, List.generate(length, (_) => 0.0));
+    return left - this;
+  }
+
+  Tensor operator *(dynamic o) {
+    if (o is Tensor) {
+      return matmul(o);
+      // return _scalarOp(o, engine.matmulTensors);
+    } else if (o is num) {
+      return _scalarOp(o, engine.mulTensors);
+    }
+    throw ArgumentError("${o.runtimeType} is not supported");
+  }
+
+  // New Division Operator
+  Tensor operator /(dynamic o) {
+    if (o is num) {
+      if (o == 0 || o == 0.0) {
+        throw UnsupportedError("Division by zero scalar.");
+      }
+      // Reuse multiplication logic with reciprocal
+      return this * (1.0 / o.toDouble());
+    } else if (o is Tensor) {
+      return _scalarOp(o, engine.divTensors);
+    }
+    throw UnsupportedError("Runtime type: ${o.runtimeType}.");
+  }
 
   // Cross Entropy Implementation
-  Tensor computeCrossEntropy(Tensor pred, Tensor target, List<Tensor> tracker) {
+  Tensor computeCrossEntropy(
+    Tensor pred,
+    List<double> targets,
+    int vocabSize,
+    List<Tensor> tracker,
+  ) {
+    final targetsMatrix = Tensor.fromList(shape, targets);
+    // logits are [T, V]
+    final int T = targetsMatrix.shape[0];
+    final int V = targetsMatrix.shape[1];
+
+    if (pred.shape[0] != T) {
+      throw ArgumentError(
+        "Target length ${targets.length} must match Logits T: $T",
+      );
+    }
+
+    int numTokens = targets.length;
+    double totalLoss = 0;
+    for (int t = 0; t < numTokens; t++) {
+      int target = targets[t].toInt();
+      int offset = t * vocabSize;
+      print("offset: $offset");
+      double maxL = -double.infinity;
+      for (int v = 0; v < vocabSize; v++) {
+        if (pred.data[offset + v] > maxL) maxL = pred.data[offset + v];
+      }
+      double sumExp = 0;
+      for (int v = 0; v < vocabSize; v++) {
+        sumExp += math.exp(pred.data[offset + v] - maxL);
+      }
+      totalLoss +=
+          (maxL + math.log(sumExp + 1e-12) - pred.data[offset + target]);
+    }
+
     // 1. logPred = log(pred)
     final logPred = pred.log();
+    // final targetsMatrix = Tensor.fromList(shape, targets);
     // 2. product = target * log(pred)
-    final product = target * logPred;
+    final product = targetsMatrix * logPred;
 
     // 3. Apply negative sign: loss = product * -1
     // We'll create a constant tensor for -1.0
@@ -451,7 +582,7 @@ class Tensor {
     final loss = product * negOne;
 
     // Track all temporaries for manual disposal later
-    tracker.addAll([logPred, product, negOne]);
+    tracker.addAll([logPred, product, negOne, targetsMatrix]);
 
     return loss;
   }
@@ -517,7 +648,9 @@ class Tensor {
 
     // Allocate memory for the indices that C can read
     final ptr = calloc<ffi.Int32>(T);
-    for (int i = 0; i < T; i++) ptr[i] = idx[i];
+    for (int i = 0; i < T; i++) {
+      ptr[i] = idx[i];
+    }
 
     final handle = engine.embeddingForward(ptr, wte._handle, wpe._handle, T, D);
 
@@ -550,6 +683,10 @@ class Tensor {
     final int cols = shape.length > 1 ? shape[1] : 1;
     final int size = rows * cols;
 
+    final int nIn = shape[0];
+    final int nOut = shape[shape.length - 1];
+    final double limit = math.sqrt(6.0 / (nIn + nOut));
+
     final math.Random rng = math.Random();
 
     // 1. Allocate native memory (Pointer<Float>)
@@ -558,7 +695,9 @@ class Tensor {
     // 2. Fill the native buffer with random values
     for (int i = 0; i < size; i++) {
       // Approximating a small normal distribution
-      nativeBuffer[i] = (rng.nextDouble() * 2 - 1) * scale;
+      // nativeBuffer[i] = (rng.nextDouble() * 2 - 1) * scale;
+
+      nativeBuffer[i] = (rng.nextDouble() * 2 - 1) * limit;
     }
 
     // 3. Pass the pointer to C++
@@ -608,7 +747,9 @@ class Tensor {
     // Your C++ engine must have a tensor_to_host function
     engine.tensorToHost(_handle, ptr);
 
-    for (int i = 0; i < size; i++) buffer[i] = ptr[i];
+    for (int i = 0; i < size; i++) {
+      buffer[i] = ptr[i];
+    }
     calloc.free(ptr);
     return buffer;
   }
@@ -725,26 +866,232 @@ class Tensor {
     final h = engine.l2Normalize(_handle, eps);
     return Tensor._raw(h, shape);
   }
+
+  String printMatrix() {
+    // final list = matrix.asTypedList(rows * cols);
+    print("Rows: ${shape[0]}, Cols: ${shape[1]}");
+    String output = "";
+    for (int i = 0; i < shape[0]; i++) {
+      final row = data.sublist(i * shape[1], (i + 1) * shape[1]);
+      output +=
+          '\n ${row.map((e) => e.toStringAsFixed(1).padLeft(5)).join(' ')}';
+      // print(row.map((e) => e.toStringAsFixed(1).padLeft(5)).join(' '));
+    }
+    return output;
+  }
+
+  String printGradient() {
+    // final list = matrix.asTypedList(rows * cols);
+    print("Rows: ${shape[0]}, Cols: ${shape[1]}");
+    String output = "";
+    for (int i = 0; i < shape[0]; i++) {
+      final row = grad.sublist(i * shape[1], (i + 1) * shape[1]);
+      output += '\n ${row.map((e) => e.toString()).join(' ')}';
+      // print(row.map((e) => e.toStringAsFixed(1).padLeft(5)).join(' '));
+    }
+    return output;
+  }
 }
 
+// void main() {
+//   final x = Tensor.fill([1, 1], 0.5);
+//   final y = x.sigmoid() + x.pow(2);
+//   y.backward();
+//   print('Forward: ${y.data}');
+
+//   final tracker = <Tensor>[];
+//   final pred = Tensor.fromList([1, 2], [0.1, 0.9]); // 90% confident in class 2
+//   final target = Tensor.fromList([1, 2], [0.0, 1.0]); // Class 2 is the truth
+
+//   final loss = pred.computeCrossEntropy(pred, target, tracker);
+
+//   print('Loss components: ${loss.data}');
+//   // Should show a small positive value for the correct class
+
+//   // Cleanup
+//   loss.dispose();
+//   for (var t in tracker) t.dispose();
+//   pred.dispose();
+//   target.dispose();
+// }
+
 void main() {
-  final x = Tensor.fill([1, 1], 0.5);
-  final y = x.sigmoid() + x.pow(2);
-  y.backward();
-  print('Forward: ${y.data}');
+  print('--- Example 1: Basic Arithmetic ---');
+  Tensor a = Tensor.fill([1, 1], 2.0);
+  Tensor b = Tensor.fill([1, 1], 3.0);
+  final c = a + b;
+  c.backward();
+  print('c: ${c.data[0]}  // Expected: 5.0');
+  print('a: ${a.grad[0]}  // Expected: 1.0');
+  print('b: ${b.grad[0]}  // Expected: 1.0');
 
-  final tracker = <Tensor>[];
-  final pred = Tensor.fromList([1, 2], [0.1, 0.9]); // 90% confident in class 2
-  final target = Tensor.fromList([1, 2], [0.0, 1.0]); // Class 2 is the truth
+  print('\n--- Example 2: Multiplication ---');
+  a = Tensor.fill([1, 1], 2.0);
+  b = Tensor.fill([1, 1], 3.0);
+  final d = a * b;
+  d.backward();
+  print('d: ${d.data[0]}  // Expected: 6.0');
+  print('a: ${a.grad[0]}  // Expected: 3.0');
+  print('b: ${b.grad[0]}  // Expected: 2.0');
 
-  final loss = pred.computeCrossEntropy(pred, target, tracker);
+  print('\n Matrix multiplcation');
+  // Matrix A (4x3)
+  final matrixA = Tensor.fromList(
+    [4, 3],
+    [
+      1, 2, 3, // row 0
+      4, 5, 6, // row 1
+      7, 8, 9, // row 2
+      1, 1, 1, // row 3
+    ],
+  );
 
-  print('Loss components: ${loss.data}');
-  // Should show a small positive value for the correct class
+  // Matrix B (3x4)
+  final matrixB = Tensor.fromList(
+    [3, 4],
+    [
+      9, 8, 7, 6, // row 0
+      5, 4, 3, 2, // row 1
+      1, 2, 3, 4, // row 2
+    ],
+  );
 
-  // Cleanup
-  loss.dispose();
-  for (var t in tracker) t.dispose();
-  pred.dispose();
-  target.dispose();
+  print('\n Matrix multiplcation');
+  // final matMuled = matrixA.matmul(matrixB);
+  final matMuled = matrixA * matrixB;
+  // print('\n Matrix multiplcation');
+  print('''y1: ${matMuled.printMatrix()}
+                  22.0  22.0  22.0  22.0
+                  67.0  64.0  61.0  58.0
+                  112.0 106.0 100.0  94.0
+                  15.0  14.0  13.0  12.0''');
+  matMuled.backward();
+  print('gradients: ${matMuled.printGradient()}');
+  print('''Expected gradients:
+ 1.0 1.0 1.0 1.0
+ 1.0 1.0 1.0 1.0
+ 1.0 1.0 1.0 1.0
+ 1.0 1.0 1.0 1.0''');
+
+  print('\n--- Example 3: Polynomial y = x^2 + 3x + 1 ---');
+  final x1 = Tensor.fill([1, 1], 2.0);
+  final y1 = (x1 * x1) + (x1 * 3.0) + 1.0;
+  y1.backward();
+  print("y1: backward executed");
+  print('y1: ${y1.data[0]}  // Expected: 11.0');
+  print('x1: ${x1.grad[0]}  // Expected: 7.0');
+
+  print('\n--- Example 4: Power y = x^3 ---');
+  final x2 = Tensor.fill([1, 1], 2.0);
+  final y2 = x2.pow(3);
+  y2.backward();
+  print('y2: ${y2.data[0]}  // Expected: 8.0');
+  print('x2: ${x2.grad[0]}  // Expected: 12.0');
+
+  print('\n--- Example 5: Negative and Division y = -a / b ---');
+  final a2 = Tensor.fill([1, 1], 4.0);
+  final b2 = Tensor.fill([1, 1], 2.0);
+  final y3 = (-a2) / b2;
+  y3.backward();
+  print('y3: ${y3.data[0]}  // Expected: -2.0');
+  print('a2: ${a2.grad[0]}  // Expected: -0.5');
+  print('b2: ${b2.grad[0]}  // Expected: 1.0');
+
+  print('\n--- Example 6: Sigmoid Activation ---');
+  final x3 = Tensor.fill([1, 1], 1.0);
+  final y4 = x3.sigmoid();
+  y4.backward();
+  print('y4: ${y4.data[0].toStringAsFixed(4)}  // Expected ≈ 0.7311');
+  print('x3: ${x3.grad[0].toStringAsFixed(4)}  // Expected grad ≈ 0.1966');
+
+  print('\n--- Example 7: ReLU Activation (x < 0) ---');
+  final x4 = Tensor.fill([1, 1], -2.0);
+  final y5 = x4.relu();
+  y5.backward();
+  print('y5: ${y5.data[0]}  // Expected: 0.0');
+  print('x4: ${x4.grad[0]}  // Expected: 0.0');
+
+  print('\n--- Example 8: ReLU Activation (x > 0) ---');
+  final x5 = Tensor.fill([1, 1], 3.0);
+  final y6 = x5.relu();
+  y6.backward();
+  print('y6: ${y6.data[0]}  // Expected: 3.0');
+  print('x5: ${x5.grad[0]}  // Expected: 1.0');
+
+  print('\n--- Example 9: Composite Expression y = sigmoid(a * x + b) * c ---');
+  final xc = Tensor.fill([1, 1], 2.0);
+  final ac = Tensor.fill([1, 1], 3.0);
+  final bc = Tensor.fill([1, 1], 1.0);
+  final cc = Tensor.fill([1, 1], -1.0);
+  final yc = ((ac * xc + bc).sigmoid()) * cc;
+  yc.backward();
+  print('yc: ${yc.data[0].toStringAsFixed(5)}');
+  print('xc: ${xc.grad[0].toStringAsFixed(5)}  // Expected ≈ -0.00273');
+  print('ac: ${ac.grad[0].toStringAsFixed(5)}  // Expected ≈ -0.00182');
+  print('bc: ${bc.grad[0].toStringAsFixed(5)}  // Expected ≈ -0.00091');
+  print('cc: ${cc.grad[0].toStringAsFixed(5)}  // Expected ≈ 0.99909');
+
+  print('\n--- Example 10: Quadratic Loss = (yTrue - yPred)^2 ---');
+  final x6 = Tensor.fill([1, 1], 2.0);
+  final w = Tensor.fill([1, 1], 3.0);
+  final yPred = w * x6;
+  final yTrue = Tensor.fill([1, 1], 10.0);
+  final loss = (yTrue - yPred).pow(2);
+  loss.backward();
+  print('loss: ${loss.data[0]}  // Expected: 16.0');
+  print('x6: ${x6.grad[0]}  // Expected: -24');
+  print('w : ${w.grad[0]}  // Expected: -16');
+
+  print('\n--- Example 11: Chain Rule ---');
+  final x7 = Tensor.fill([1, 1], 2.0);
+  final y7 = x7 * 3.0;
+  final z7 = y7 + 5.0;
+  final out7 = z7.pow(2);
+  out7.backward();
+  print('out7: ${out7.data[0]}  // Expected: 121.0');
+  print('x7: ${x7.grad[0]}  // Expected: 66.0');
+
+  print('\n--- Example 12: Simple Addition with Negation ---');
+  final x8 = Tensor.fill([1, 1], 5.0);
+  final y8 = Tensor.fill([1, 1], 3.0);
+  final z8 = -(x8 + y8);
+  z8.backward();
+  print('z8: ${z8.data[0]}  // Expected: -8.0');
+  print('x8: ${x8.grad[0]}  // Expected: -1.0');
+  print('y8: ${y8.grad[0]}  // Expected: -1.0');
+
+  print('\n--- Example 13: Chain of Operations (x + 2) * (y - 1) ---');
+  final x9 = Tensor.fill([1, 1], 4.0);
+  final y9 = Tensor.fill([1, 1], 6.0);
+  final z9 = (x9 + 2.0) * (y9 - 1.0);
+  z9.backward();
+  print('z9: ${z9.data[0]}  // Expected: 30.0');
+  print('x9: ${x9.grad[0]}  // Expected: 5.0');
+  print('y9: ${y9.grad[0]}  // Expected: 6.0');
+
+  print('\n--- Example 14: More Complex Expression ---');
+  final x10 = Tensor.fill([1, 1], 1.0);
+  final y10 = x10 * 2.0;
+  // print('y10: ${y10.data[0]}  // Expected: 2.0');
+  final z10 = (y10 + 3.0).pow(2);
+  // print('z10: ${z10.data[0]}  // Expected: 25.0');
+  // final out10 = z10 / Tensor.fill([1, 1], 4.0);
+  final out10 = z10 / 4;
+  out10.backward();
+  print('out10: ${out10.data[0]}  // Expected: 6.25');
+  print('x10: ${x10.grad[0]}  // Expected: 5.0');
+
+  print('\n--- Example 15: Reshape and Backprop ---');
+  // Start with a 1x4 vector
+  final x11 = Tensor.fill([1, 4], 2.0);
+  // Reshape to 2x2
+  final reshaped = x11.reshape([2, 2]);
+  // Perform an operation on the reshaped version
+  final out11 = reshaped * 3.0;
+
+  out11.backward();
+
+  print('reshaped shape: ${reshaped.shape}; // Expected: [2, 2]');
+  print('out11 data[0]: ${out11.data[0]}; // Expected: 6.0');
+  print('x11 grad[0]: ${x11.grad[0]}; // Expected: 3.0');
 }

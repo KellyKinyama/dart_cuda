@@ -1,7 +1,12 @@
 import 'gpu_tensor.dart';
 
 void main() {
-  final inputs = [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]];
+  final inputs = [
+    [0.0, 0.0],
+    [0.0, 1.0],
+    [1.0, 0.0],
+    [1.0, 1.0],
+  ];
   final targets = [0.0, 1.0, 1.0, 0.0];
 
   // Weights stay alive for the whole program
@@ -10,7 +15,7 @@ void main() {
 
   const double lr = 0.5;
 
-  for (int epoch = 0; epoch <= 1000; epoch++) {
+  for (int epoch = 0; epoch <= 3000; epoch++) {
     double epochLoss = 0;
     for (int i = 0; i < 4; i++) {
       final x = Tensor.fromList([1, 2], inputs[i]);
@@ -50,10 +55,14 @@ void main() {
     final x = Tensor.fromList([1, 2], inputs[i]);
     final h = x.matmul(w1).sigmoid();
     final pred = h.matmul(w2).sigmoid();
-    
-    print('Input: ${inputs[i]} -> Prediction: ${pred.data[0].toStringAsFixed(4)} (Target: ${targets[i]})');
-    
+
+    print(
+      'Input: ${inputs[i]} -> Prediction: ${pred.data[0].toStringAsFixed(4)} (Target: ${targets[i]})',
+    );
+
     // Clean up
-    x.dispose(); h.dispose(); pred.dispose();
+    x.dispose();
+    h.dispose();
+    pred.dispose();
   }
 }

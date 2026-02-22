@@ -4,12 +4,26 @@ import 'package:ffi/ffi.dart';
 // 1. Define the FFI function signatures to match the C/C++ wrapper.
 
 // This is the native C function signature.
-typedef MatMulFunc = Void Function(
-    Pointer<Float> a, Pointer<Float> b, Pointer<Float> c, Int32 M, Int32 N, Int32 K);
+typedef MatMulFunc =
+    Void Function(
+      Pointer<Float> a,
+      Pointer<Float> b,
+      Pointer<Float> c,
+      Int32 M,
+      Int32 N,
+      Int32 K,
+    );
 
 // This is the Dart-friendly version of the function.
-typedef MatMul = void Function(
-    Pointer<Float> a, Pointer<Float> b, Pointer<Float> c, int M, int N, int K);
+typedef MatMul =
+    void Function(
+      Pointer<Float> a,
+      Pointer<Float> b,
+      Pointer<Float> c,
+      int M,
+      int N,
+      int K,
+    );
 
 void main() {
   // Define matrix dimensions: A(M x K) * B(K x N) = C(M x N)
@@ -21,8 +35,9 @@ void main() {
   final dylib = DynamicLibrary.open('./libmatmul.so');
 
   // 3. Look up the function by its C name.
-  final matMulCuda =
-      dylib.lookupFunction<MatMulFunc, MatMul>('matrix_multiply_cuda');
+  final matMulCuda = dylib.lookupFunction<MatMulFunc, MatMul>(
+    'matrix_multiply_cuda',
+  );
 
   // 4. Allocate memory for the matrices that C can understand.
   // Matrices are stored as flat, 1D arrays in row-major order.
@@ -36,10 +51,10 @@ void main() {
 
   // Matrix A (4x3)
   matrixA.setAll(0, [
-    1, 2, 3,  // row 0
-    4, 5, 6,  // row 1
-    7, 8, 9,  // row 2
-    1, 1, 1,  // row 3
+    1, 2, 3, // row 0
+    4, 5, 6, // row 1
+    7, 8, 9, // row 2
+    1, 1, 1, // row 3
   ]);
 
   // Matrix B (3x4)

@@ -4,11 +4,15 @@ import 'dart:math';
 abstract class Module {
   List<Tensor> parameters();
   void zeroGrad() {
-    for (var p in parameters()) p.zeroGrad();
+    for (var p in parameters()) {
+      p.zeroGrad();
+    }
   }
 
   void step(double lr) {
-    for (var p in parameters()) p.step(lr);
+    for (var p in parameters()) {
+      p.step(lr);
+    }
   }
 }
 
@@ -17,7 +21,7 @@ class Layer extends Module {
   late Tensor b;
   final bool useGelu;
 
-  Layer(int nin, int nout, {this.useGelu = true}) {
+  Layer(int nin, int nout, {required this.useGelu}) {
     // Xavier/Glorot Initialization
     double scale = sqrt(2.0 / (nin + nout));
     w = Tensor.fromList(

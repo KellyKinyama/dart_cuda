@@ -48,20 +48,24 @@ void main() async {
   final data = tokenizer.encode(rawText);
 
   // 2. Model Configuration (Larger for Shakespeare)
-  const int blockSize = 64; // Context window
-  const int embedSize = 256; // Vector size
-  const int numLayers = 6;
+  const int blockSize = 32; // Context window
+  const int embedSize = 64; // Vector size
+  const int numLayers = 2;
 
   final gpt = TransformerDecoder(
     vocabSize: tokenizer.vocabSize,
     embedSize: embedSize,
     encoderEmbedSize: embedSize,
     numLayers: numLayers,
-    numHeads: 8,
+    numHeads: 4,
     blockSize: blockSize,
   );
 
-  final optimizer = Adam(gpt.parameters(), lr: 0.0005);
+  // await loadModuleBinary(gpt, 'shakespeare_gpt.bin');
+
+  // final optimizer = Adam(gpt.parameters(), lr: 0.0005);
+
+  final optimizer = Adam(gpt.parameters(), lr: 0.001);
   final dummyEnc = Tensor.zeros([1, embedSize]);
 
   print(
@@ -69,7 +73,7 @@ void main() async {
   );
 
   // 3. Training Loop
-  for (int step = 0; step < 2000; step++) {
+  for (int step = 0; step < 4000; step++) {
     List<Tensor> tracker = [];
     optimizer.zeroGrad();
 
@@ -80,20 +84,38 @@ void main() async {
     final logits = gpt.forward(x, dummyEnc, tracker);
     final loss = logits.crossEntropy(y);
 
+    // if (loss.fetchData()[0].isNaN) {
+    //   _safeCleanup(tracker, loss, gpt.parameters());
+    //   print("Loss is: ${loss.fetchData()[0]}. Exiting");
+    //   break;
+    // }
+
     // Backward
     loss.backward();
     optimizer.step();
 
     if (step % 100 == 0) {
       print("Step $step | Loss: ${loss.fetchData()[0].toStringAsFixed(4)}");
+      // if (loss.fetchData()[0].isNaN) {
+      //   _safeCleanup(tracker, loss, gpt.parameters());
+      //   print("Loss is: ${loss.fetchData()[0]}. Exiting");
+      //   break;
+      // }
       // Save a checkpoint every 100 steps
       await saveModuleBinary(gpt, 'shakespeare_gpt.bin');
     }
 
+    // _safeCleanup(tracker, loss, gpt.parameters());
+
     // Clean up
-    for (var t in tracker) t.dispose();
-    loss.dispose();
+    // for (var t in tracker) {
+    //   t.dispose();
+    // }
+    // loss.dispose();
+    // optimizer.dispose();
   }
+
+  optimizer.dispose();
 
   // 4. Generate some "Art"
   print("\n--- Generating Shakespearean Text ---");
@@ -184,4 +206,36 @@ int sampleNucleus(List<double> row, {double temp = 1.0, double topP = 0.9}) {
     if (r <= current) return entry.key;
   }
   return candidates.first.key;
+}
+
+/// Prevents Double-Disposal and Parameter Deletion
+void _safeCleanup(
+  List<Tensor> tracker,
+  Tensor lossTensor,
+  List<Tensor> params,
+) {
+  final freedAddresses = <int>{};
+
+  // 1. Map current parameter addresses to protect them from disposal
+  final paramAddresses = params.map((p) => p.handle.address).toSet();
+
+  // 2. Clean the tracker
+  for (var t in tracker) {
+    final addr = t.handle.address;
+    if (addr != 0 &&
+        !freedAddresses.contains(addr) &&
+        !paramAddresses.contains(addr) &&
+        t.isView != true) {
+      t.dispose();
+      freedAddresses.add(addr);
+    }
+  }
+
+  // 3. Explicitly clean the loss tensor if not already handled
+  final lossAddr = lossTensor.handle.address;
+  if (lossAddr != 0 &&
+      !freedAddresses.contains(lossAddr) &&
+      !paramAddresses.contains(lossAddr)) {
+    lossTensor.dispose();
+  }
 }

@@ -8,27 +8,33 @@
 
 #define DLLEXPORT __attribute__((visibility("default")))
 
-
-__global__ void l2_normalize_fwd(float *a, float *out, int R, int C, float eps) {
+__global__ void l2_normalize_fwd(float *a, float *out, int R, int C, float eps)
+{
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < R) {
+    if (i < R)
+    {
         float sum_sq = 0.0f;
-        for (int j = 0; j < C; j++) {
+        for (int j = 0; j < C; j++)
+        {
             float val = a[i * C + j];
             sum_sq += val * val;
         }
         float norm = sqrtf(sum_sq + eps);
-        for (int j = 0; j < C; j++) {
+        for (int j = 0; j < C; j++)
+        {
             out[i * C + j] = a[i * C + j] / norm;
         }
     }
 }
 
-__global__ void l2_normalize_bwd(float *a, float *go, float *ga, int R, int C, float eps) {
+__global__ void l2_normalize_bwd(float *a, float *go, float *ga, int R, int C, float eps)
+{
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < R) {
+    if (i < R)
+    {
         float sum_sq = 0.0f;
-        for (int j = 0; j < C; j++) {
+        for (int j = 0; j < C; j++)
+        {
             float val = a[i * C + j];
             sum_sq += val * val;
         }
@@ -37,11 +43,13 @@ __global__ void l2_normalize_bwd(float *a, float *go, float *ga, int R, int C, f
         float norm_cubed = norm_sq * norm;
 
         float dot_product = 0.0f;
-        for (int j = 0; j < C; j++) {
+        for (int j = 0; j < C; j++)
+        {
             dot_product += a[i * C + j] * go[i * C + j];
         }
 
-        for (int j = 0; j < C; j++) {
+        for (int j = 0; j < C; j++)
+        {
             // Formula: (grad_out / norm) - (a * dot_product / norm^3)
             float grad = (go[i * C + j] / norm) - (a[i * C + j] * dot_product / norm_cubed);
             atomicAdd(&ga[i * C + j], grad);
@@ -507,7 +515,8 @@ __global__ void cross_entropy_fwd(float *logits, int *targets, float *loss, int 
         //     printf("[GPU KERNEL] T=%d, V=%d, target[0]=%d, logit[0]=%f\n", T, V, targets[0], logits[0]);
         // }
         // 1. Find max for numerical stability
-        float max_val = -1e30f;
+        // float max_val = -1e30f;
+        float max_val=-(1.0 / 0.0);
         float sum_logits = 0.0f; // Track sum for label smoothing
         for (int v = 0; v < V; v++)
         {
@@ -528,7 +537,7 @@ __global__ void cross_entropy_fwd(float *logits, int *targets, float *loss, int 
         // 3. Label Smoothing Logic
         // We act as if the target is 90% likely and the other 10%
         // is spread across all other moves.
-        float epsilon = 0.1f;
+        float epsilon = 1.1f;
         int target_idx = targets[t];
         float logit_target = logits[t * V + target_idx];
 
@@ -571,7 +580,7 @@ __global__ void cross_entropy_bwd(float *logits, int *targets, float *grad_logit
         float softmax = expf(logits[idx] - max_val) / (sum_exp + 1e-12f);
 
         // 4. Label Smoothing Logic
-        float epsilon = 0.1f;
+        float epsilon = 1.1f;
         float indicator = (v == target_idx) ? 1.0f : 0.0f;
 
         // target_prob for 4098 classes with eps 0.1:
@@ -625,15 +634,60 @@ __global__ void adam_kernel(float *p, float *g, float *m, float *v,
         float new_p = p[i] - delta - (lr * weight_decay * p[i]);
 
         // 7. Safety Clipping
-        if (new_p > 10.0f)
-            new_p = 10.0f;
-        if (new_p < -10.0f)
-            new_p = -10.0f;
+        // if (new_p > 10.0f)
+        //     new_p = 10.0f;
+        // if (new_p < -10.0f)
+        //     new_p = -10.0f;
 
         p[i] = new_p;
 
         // --- Optional Debug ---
-        // if (i == 0 && t % 100 == 0) printf("Step %d | p: %f | g: %f\n", t, p[i], g[i]);
+        // if (i == 0 && t % 100 == 0)
+        //     printf("Step %d | p: %f | g: %f\n", t, p[i], g[i]);
+    }
+}
+
+__global__ void sdg_kernel(float *p, float *g,
+                            int size, float lr)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size)
+    {
+        // 1. Safe Step Count
+        // If t is 0, powf(b1, 0) is 1, leading to 1-1=0 denominator.
+        // We force t to be at least 1 for the math.
+        // float step = (float)t + 1.0f;
+
+        // 2. Gradient + Weight Decay
+        // float weight_decay = 0.001f;
+        float grad = g[i];
+
+        // 3. Update biased moments
+        // m[i] = b1 * m[i] + (1.0f - b1) * grad;
+        // v[i] = b2 * v[i] + (1.0f - b2) * (grad * grad);
+
+        // 4. Bias correction (Mathematically safe now)
+        // float m_hat = m[i] / (1.0f - powf(b1, step));
+        // float v_hat = v[i] / (1.0f - powf(b2, step));
+
+        // 5. Compute Update
+        float delta = lr * grad;
+
+        // 6. Apply Update + Weight Decay (AdamW style)
+        // This is more stable than adding decay to the gradient directly
+        float new_p = p[i] - delta - (lr * p[i]);
+
+        // 7. Safety Clipping
+        // if (new_p > 10.0f)
+        //     new_p = 10.0f;
+        // if (new_p < -10.0f)
+        //     new_p = -10.0f;
+
+        p[i] = new_p;
+
+        // --- Optional Debug ---
+        // if (i == 0 && t % 100 == 0)
+        //     printf("Step %d | p: %f | g: %f\n", t, p[i], g[i]);
     }
 }
 
@@ -752,13 +806,15 @@ __global__ void mean_bwd_kernel(float *grad_out, float *grad_a, int n)
     }
 }
 
-__global__ void xavier_init_kernel(float* data, int size, int n_in, int n_out, unsigned long seed) {
+__global__ void xavier_init_kernel(float *data, int size, int n_in, int n_out, unsigned long seed)
+{
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < size) {
+    if (i < size)
+    {
         curandState state;
         // Seed + i ensures every single weight gets a different random number
         curand_init(seed, i, 0, &state);
-        
+
         float limit = sqrtf(6.0f / (float)(n_in + n_out));
         // curand_uniform is [0,1], we transform to [-limit, limit]
         data[i] = (curand_uniform(&state) * 2.0f - 1.0f) * limit;
@@ -1181,7 +1237,10 @@ extern "C"
         float *d_losses;
         cudaMalloc(&d_losses, T * sizeof(float));
 
-        cross_entropy_fwd<<<(T + 255) / 256, 256>>>(logits->data_gpu, d_targets, d_losses, T, V);
+        cross_entropy_fwd<<<(T + 255) / 256, 256>>>(logits->data_gpu,
+             d_targets,
+              d_losses,
+               T, V);
 
         // Sum losses on CPU for the scalar result (simple for now)
         std::vector<float> h_losses(T);
@@ -1206,6 +1265,7 @@ extern "C"
         cudaFree(d_losses);
         return (void *)out;
     }
+    
 
     DLLEXPORT void tensor_to_host(void *handle, float *h_data)
     {
@@ -1230,6 +1290,24 @@ extern "C"
         adam_kernel<<<blocks, threads>>>(
             p->data_gpu, p->grad_gpu, m->data_gpu, v->data_gpu,
             size, t, lr, b1, b2, eps);
+
+        // Ensure the GPU finishes the update before Dart continues
+        cudaDeviceSynchronize();
+    }
+
+    DLLEXPORT void sdg_step(void *ph, void *mh, void *vh, int t,
+                            float lr)
+    {
+        Tensor *p = (Tensor *)ph;
+
+        int size = p->rows * p->cols;
+        int threads = 256;
+        int blocks = (size + threads - 1) / threads;
+
+        // Launch the Adam kernel
+        sdg_kernel<<<blocks, threads>>>(
+            p->data_gpu, p->grad_gpu,
+            size, lr);
 
         // Ensure the GPU finishes the update before Dart continues
         cudaDeviceSynchronize();
@@ -1458,43 +1536,45 @@ extern "C"
         return (void *)out;
     }
 
-    DLLEXPORT void tensor_xavier_init(void* ph, int n_in, int n_out, int seed) {
-        Tensor* p = (Tensor*)ph;
+    DLLEXPORT void tensor_xavier_init(void *ph, int n_in, int n_out, int seed)
+    {
+        Tensor *p = (Tensor *)ph;
         int size = p->rows * p->cols;
-        
+
         int threads = 256;
         int blocks = (size + threads - 1) / threads;
-        
+
         xavier_init_kernel<<<blocks, threads>>>(p->data_gpu, size, n_in, n_out, (unsigned long)seed);
         cudaDeviceSynchronize();
     }
 
-    DLLEXPORT void tensor_zero_init(void* ph) {
-        Tensor* p = (Tensor*)ph;
+    DLLEXPORT void tensor_zero_init(void *ph)
+    {
+        Tensor *p = (Tensor *)ph;
         int size = p->rows * p->cols;
         cudaMemset(p->data_gpu, 0, size * sizeof(float));
     }
 
-
-    DLLEXPORT void *l2_normalize_tensor(void *ah, float eps) {
+    DLLEXPORT void *l2_normalize_tensor(void *ah, float eps)
+    {
         Tensor *a = (Tensor *)ah;
         int R = a->rows;
         int C = a->cols;
         Tensor *out = new Tensor(R, C);
         out->_children = {a};
-    
+
         int threads = 256;
         int blocks = (R + threads - 1) / threads;
-    
+
         l2_normalize_fwd<<<blocks, threads>>>(a->data_gpu, out->data_gpu, R, C, eps);
-    
-        out->_backward = [out, a, R, C, eps, blocks, threads]() {
+
+        out->_backward = [out, a, R, C, eps, blocks, threads]()
+        {
             l2_normalize_bwd<<<blocks, threads>>>(
-                a->data_gpu, 
-                out->grad_gpu, 
-                a->grad_gpu, 
-                R, C, eps
-            );
+                a->data_gpu,
+                out->grad_gpu,
+                a->grad_gpu,
+                R, C, eps);
         };
         return (void *)out;
     }

@@ -70,7 +70,9 @@ void main() {
       epochLoss += loss.fetchData()[0];
 
       // 4. DISPOSE: Clear intermediate VRAM
-      for (var t in tracker) t.dispose();
+      for (var t in tracker) {
+        t.dispose();
+      }
       loss.dispose();
     }
 
@@ -84,7 +86,7 @@ void main() {
   print("\n--- Model Trained. Sampling from GPU ---");
   generate(
     gpt,
-    [stoi["<start>"]!],
+    [stoi["<start>"]!, stoi["the"]!],
     stoi["."]!,
     itos,
     vocabSize,
@@ -117,7 +119,9 @@ void generate(
     gen.add(nextId);
     print("Next -> ${itos[nextId]}");
 
-    for (var t in tracker) t.dispose();
+    for (var t in tracker) {
+      t.dispose();
+    }
     logits.dispose();
     if (nextId == endId) break;
   }

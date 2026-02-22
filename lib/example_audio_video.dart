@@ -42,7 +42,7 @@ void main() {
 
   print("🚀 Starting Multimodal GPU Training...");
 
-  for (int epoch = 0; epoch < 1000; epoch++) {
+  for (int epoch = 0; epoch < 3000; epoch++) {
     List<Tensor> tracker = [];
 
     // --- 3. Forward Passes ---

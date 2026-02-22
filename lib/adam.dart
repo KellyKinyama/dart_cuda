@@ -9,6 +9,8 @@ class Adam {
   final List<Tensor> m = [];
   final List<Tensor> v = [];
 
+  final List<Tensor> tracker = [];
+
   Adam(
     this.params, {
     this.lr = 0.001,
@@ -37,7 +39,7 @@ class Adam {
 
     for (int i = 0; i < params.length; i++) {
       // 1. Clip Gradients: Clamps outliers to prevent NaN weight updates
-      engine.clipGradients(params[i].handle, gradClip);
+      // engine.clipGradients(params[i].handle, gradClip);
 
       // 2. Adam Update: The heavy lifting happens inside the CUDA kernel
       engine.adamStep(
@@ -50,7 +52,22 @@ class Adam {
         beta2,
         eps,
       );
+
+      if (params[i].fetchData().isNotEmpty) {
+        bool isNaN = params[i].fetchData()[0].isNaN;
+
+        if (isNaN) {
+          // _safeCleanup(tracker, loss, gpt.parameters());
+          // print("Loss is: ${loss.fetchData()[0]}. Exiting");
+          dispose();
+          throw Exception("parameter[i]: $isNaN");
+        }
+      }
+
+      tracker.addAll([m[i], v[i]]);
     }
+
+    // print("m ${m}");
   }
 
   /// Vital: Manually free GPU memory for moment buffers
@@ -60,4 +77,12 @@ class Adam {
     m.clear();
     v.clear();
   }
+
+  // void dispose() {
+  //   // print("Disposing tracker in adam: ${tracker.length}");
+  //   for (var tensor in tracker) tensor.dispose();
+  //   // for (var tensor in v) tensor.dispose();
+  //   tracker.clear();
+  //   // v.clear();
+  // }
 }
