@@ -21,9 +21,13 @@ class AFTAttention extends Module {
          maxSeqLen,
        ], List.generate(maxSeqLen * maxSeqLen, (_) => 0.01));
 
-  Tensor forward(Tensor x, List<Tensor> tracker) {
+  Tensor forward(Tensor x, List<Tensor> tracker, {Tensor? kv}) {
     // --- DEBUG: Input Check ---
     _debugTensor("Input X", x);
+
+    // 2. Keys and Values come from the context (kv) if provided,
+    // otherwise they come from x (standard self-attention).
+    // final context = kv ?? x;
 
     final q = queryLayer.forward(x, tracker);
     final k = keyLayer.forward(x, tracker);
