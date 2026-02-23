@@ -37,7 +37,7 @@ class CharTokenizer {
 }
 
 void main() async {
-  // 1. Load the data
+  // 1. Load data
   final File file = File('tiny_shakespeare.txt');
   if (!await file.exists()) {
     print("Please download tiny_shakespeare.txt first!");
@@ -47,33 +47,31 @@ void main() async {
   final tokenizer = CharTokenizer(rawText);
   final data = tokenizer.encode(rawText);
 
-  // 2. Model Configuration (Larger for Shakespeare)
-  const int blockSize = 32; // Context window
-  const int embedSize = 64; // Vector size
-  const int numLayers = 2;
+  // 2. Tuned Model Configuration
+  // Higher blockSize allows for longer sentence structure
+  // Higher embedSize allows for better character relationship mapping
+  const int blockSize = 64;
+  const int embedSize = 128;
+  const int numLayers = 4;
+  const int numHeads = 8;
 
   final gpt = TransformerDecoder(
     vocabSize: tokenizer.vocabSize,
     embedSize: embedSize,
     encoderEmbedSize: embedSize,
     numLayers: numLayers,
-    numHeads: 4,
+    numHeads: numHeads,
     blockSize: blockSize,
   );
 
-  // await loadModuleBinary(gpt, 'shakespeare_gpt.bin');
-
-  // final optimizer = Adam(gpt.parameters(), lr: 0.0005);
-
-  final optimizer = Adam(gpt.parameters(), lr: 0.001);
+  // Adam Optimizer with a slightly more conservative learning rate for stability
+  final optimizer = Adam(gpt.parameters(), lr: 0.0005);
   final dummyEnc = Tensor.zeros([1, embedSize]);
 
-  print(
-    "🎭 Training on Shakespeare (${tokenizer.vocabSize} unique characters)...",
-  );
+  print("🎭 Training on Shakespeare: Layers: $numLayers, Embed: $embedSize");
 
-  // 3. Training Loop
-  for (int step = 0; step < 4000; step++) {
+  // 3. Optimized Training Loop
+  for (int step = 0; step < 5000; step++) {
     List<Tensor> tracker = [];
     optimizer.zeroGrad();
 
@@ -84,49 +82,36 @@ void main() async {
     final logits = gpt.forward(x, dummyEnc, tracker);
     final loss = logits.crossEntropy(y);
 
-    // if (loss.fetchData()[0].isNaN) {
-    //   _safeCleanup(tracker, loss, gpt.parameters());
-    //   print("Loss is: ${loss.fetchData()[0]}. Exiting");
-    //   break;
-    // }
-
     // Backward
     loss.backward();
+
+    // Gradient Clipping (Optional but recommended for Transformers)
+    // for (var p in gpt.parameters()) p.clipGrad(1.0);
+
     optimizer.step();
 
     if (step % 100 == 0) {
-      print("Step $step | Loss: ${loss.fetchData()[0].toStringAsFixed(4)}");
-      // if (loss.fetchData()[0].isNaN) {
-      //   _safeCleanup(tracker, loss, gpt.parameters());
-      //   print("Loss is: ${loss.fetchData()[0]}. Exiting");
-      //   break;
-      // }
-      // Save a checkpoint every 100 steps
+      double lossVal = loss.fetchData()[0];
+      print("Step $step | Loss: ${lossVal.toStringAsFixed(4)}");
+
+      // Save checkpoint
       await saveModuleBinary(gpt, 'shakespeare_gpt.bin');
+
+      if (lossVal.isNaN) {
+        print("💥 Loss exploded. Check weight initialization or reduce LR.");
+        break;
+      }
     }
 
-    // _safeCleanup(tracker, loss, gpt.parameters());
-
-    // Clean up
-    // for (var t in tracker) {
-    //   t.dispose();
-    // }
-    // loss.dispose();
-    // optimizer.dispose();
+    // --- CRITICAL MEMORY CLEANUP ---
+    // Intermediate tensors in 'tracker' must be freed every step
+    _safeCleanup(tracker, loss, gpt.parameters());
   }
 
   optimizer.dispose();
 
-  // 4. Generate some "Art"
   print("\n--- Generating Shakespearean Text ---");
-  // String contextStr = "ROMEO: ";
-  // List<int> gen = tokenizer.encode(contextStr);
-
-  // 4. Generate some "Art"
-  print("\n--- Generating Shakespearean Text ---");
-
-  // Let's generate 200 characters starting with ROMEO:
-  generateShakespeare(gpt, tokenizer, "ROMEO: ", 200, blockSize, dummyEnc);
+  generateShakespeare(gpt, tokenizer, "ROMEO: ", 300, blockSize, dummyEnc);
 }
 
 void generateShakespeare(

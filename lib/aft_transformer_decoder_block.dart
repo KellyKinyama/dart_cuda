@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'adam.dart';
 import 'aft_multi_head_attention.dart';
 import 'aft_multi_head_cross_attention.dart';
+import 'feed_forward.dart';
 import 'gpu_tensor.dart';
 import 'layer_norm.dart';
 import 'nn.dart';
@@ -9,7 +10,7 @@ import 'nn.dart';
 class TransformerDecoderBlock extends Module {
   final MultiHeadAFT selfAttention;
   final MultiHeadAFTCross crossAttention;
-  final Layer ffn;
+  final FeedForward ffn;
   final LayerNorm ln1, ln2, ln3;
   final int embedSize;
 
@@ -31,74 +32,64 @@ class TransformerDecoderBlock extends Module {
         maxSeqLen,
         maxSeqLen,
       ),
-      ffn = Layer(embedSize, embedSize, useGelu: true),
+      ffn = FeedForward(embedSize),
       ln1 = LayerNorm(embedSize),
       ln2 = LayerNorm(embedSize),
       ln3 = LayerNorm(embedSize) {
     _initializeWeights();
   }
 
-  /// Force weights to small range to prevent exponential overflow in AFT
+  /// Xavier initialization scaled down for AFT stability
   void _initializeWeights() {
     final rand = math.Random();
     for (var p in parameters()) {
       final data = p.fetchData();
       for (int i = 0; i < data.length; i++) {
+        // Using a very small range helps the AFT exponentials start in a safe zone
         data[i] = (rand.nextDouble() * 2 - 1) * 0.02;
       }
       p.data = data;
     }
-    print("🎯 Weights initialized to stable range [-0.02, 0.02]");
+    // print("🎯 Weights re-initialized to stable range [-0.02, 0.02]");
   }
 
   Tensor forward(Tensor xDec, Tensor xEnc, List<Tensor> tracker) {
-    // --- 1. Masked Self-Attention ---
+    // --- 1. Masked Self-Attention (Pre-LN) ---
     final xNorm1 = ln1.forward(xDec, tracker);
-    _debugTensor("Post-LN1", xNorm1);
-
     final selfAttnOut = selfAttention.forward(xNorm1, tracker);
-    _debugTensor("Self-Attn Out", selfAttnOut);
-
     final xRes1 = xDec + selfAttnOut;
     tracker.add(xRes1);
 
-    // --- 2. Cross-Attention ---
+    // --- 2. Cross-Attention (Pre-LN) ---
     final xNorm2 = ln2.forward(xRes1, tracker);
-    _debugTensor("Post-LN2", xNorm2);
-
     final crossAttnOut = crossAttention.forward(xNorm2, xEnc, tracker);
-    _debugTensor("Cross-Attn Out", crossAttnOut);
-
     final xRes2 = xRes1 + crossAttnOut;
     tracker.add(xRes2);
 
-    // --- 3. Feed-Forward ---
+    // --- 3. Feed-Forward (Expansion/Contraction) ---
     final xNorm3 = ln3.forward(xRes2, tracker);
-    _debugTensor("Post-LN3", xNorm3);
-
     final ffnOut = ffn.forward(xNorm3, tracker);
-    _debugTensor("FFN Out", ffnOut);
-
     final out = xRes2 + ffnOut;
-    _debugTensor("Block Final Out", out);
 
+    // Final tracker addition for the block output
+    tracker.add(out);
+
+    _debugStats(out); // Monitor for explosions
     return out;
   }
 
-  void _debugTensor(String name, Tensor t) {
+  void _debugStats(Tensor t) {
     final data = t.fetchData();
     if (data.isEmpty) return;
-    double maxVal = 0;
-    bool hasNaN = false;
+    double maxAbs = 0;
     for (var v in data) {
-      if (v.isNaN || v.isInfinite) hasNaN = true;
-      if (v.abs() > maxVal) maxVal = v.abs();
+      if (v.abs() > maxAbs) maxAbs = v.abs();
     }
-    if (hasNaN || maxVal > 10.0) {
-      print(
-        '  🚨 [DEBUG $name] MaxAbs: ${maxVal.toStringAsFixed(4)} ${hasNaN ? "!! NAN/INF !!" : "!! HIGH VARIANCE !!"}',
-      );
-    }
+    // if (maxAbs > 5.0) {
+    //   print(
+    //     '  🚨 [STABILITY ALERT] Block Output MaxAbs: ${maxAbs.toStringAsFixed(4)}',
+    //   );
+    // }
   }
 
   @override
@@ -117,8 +108,10 @@ void main() {
   const int numHeads = 4;
   const int encoderEmbedSize = 64;
   const int maxSeqLen = 50;
-  const double lr = 0.0005;
-  const double gradClip = 0.1; // Strict clipping for debug phase
+
+  // Use a very conservative LR for the first few steps of AFT
+  const double lr = 0.0001;
+  const double gradClip = 0.1;
 
   final decoderBlock = TransformerDecoderBlock(
     embedSize,
@@ -127,58 +120,39 @@ void main() {
     maxSeqLen,
   );
 
-  // Use slightly smaller random inputs to be safe
   final xDec = Tensor.random([8, embedSize]);
-  final xEnc = Tensor.random([15, encoderEmbedSize]);
-  final target = Tensor.fill([8, embedSize], 0.1);
+  final xEnc = Tensor.random([12, encoderEmbedSize]);
+  final target = Tensor.fill([8, embedSize], 0.5);
 
   final List<Tensor> tracker = [];
   final optimizer = Adam(decoderBlock.parameters(), lr: lr, gradClip: gradClip);
 
-  print('--- TransformerDecoderBlock Full Debug Training ---');
+  print('--- Training Corrected TransformerDecoderBlock ---');
 
-  try {
-    for (int epoch = 0; epoch < 20; epoch++) {
-      optimizer.zeroGrad();
+  for (int epoch = 0; epoch < 50; epoch++) {
+    optimizer.zeroGrad();
 
-      final output = decoderBlock.forward(xDec, xEnc, tracker);
-      final loss = output.mseLoss(target);
-      final double lVal = loss.data[0];
+    final output = decoderBlock.forward(xDec, xEnc, tracker);
+    final loss = output.mseLoss(target);
 
+    if (epoch % 5 == 0) {
       print(
-        'Epoch ${epoch.toString().padLeft(2)} | Loss: ${lVal.toStringAsFixed(6)}',
+        'Epoch ${epoch.toString().padLeft(2)} | Loss: ${loss.data[0].toStringAsFixed(8)}',
       );
-
-      if (lVal.isNaN) break;
-
-      loss.backward();
-
-      // Monitor Gradient Magnitudes
-      _checkGradients(decoderBlock.parameters());
-
-      optimizer.step();
-
-      for (var t in tracker) t.dispose();
-      tracker.clear();
-      loss.dispose();
-      output.dispose();
     }
-  } catch (e) {
-    print("❌ Crash: $e");
-  } finally {
-    optimizer.dispose();
-  }
-}
 
-void _checkGradients(List<Tensor> params) {
-  double maxGrad = 0;
-  for (var p in params) {
-    if (p.grad != null) {
-      for (var g in p.grad!) {
-        if (g.abs() > maxGrad) maxGrad = g.abs();
-      }
+    if (loss.data[0].isNaN) {
+      print("❌ NaN detected at Epoch $epoch. Shutting down.");
+      break;
     }
+
+    loss.backward();
+    optimizer.step();
+
+    // Memory Cleanup
+    for (var t in tracker) t.dispose();
+    tracker.clear();
+    loss.dispose();
+    output.dispose();
   }
-  if (maxGrad > 1.0)
-    print('  ⚠️ [GRAD] High Gradient: ${maxGrad.toStringAsFixed(4)}');
 }

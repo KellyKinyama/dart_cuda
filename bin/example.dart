@@ -44,7 +44,7 @@ void main() {
     [7, 2, 3, 4, 5, 8, 9, 2, 10, 11, 6], // <start> the quick brown fox .
   ];
 
-  for (int epoch = 0; epoch <= 500; epoch++) {
+  for (int epoch = 0; epoch <= 1000; epoch++) {
     double epochLoss = 0;
 
     for (var seq in dataset) {

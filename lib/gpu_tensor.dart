@@ -241,10 +241,11 @@ class CudaEngine {
   late _D_reduce meanTensor;
   late _ZeroInitDart _tensorZeroInit;
   late _XavierInitDart _tensorXavierInit;
-  late _D_l2norm l2Normalize; // Add this
+  // late _D_l2norm l2Normalize; // Add this
+  late _D_l2norm layerNorm;
 
   CudaEngine() {
-    _lib = ffi.DynamicLibrary.open('${Directory.current.path}/libmatmul.so');
+    _lib = ffi.DynamicLibrary.open('${Directory.current.path}/libmat_mul.so');
     createTensor = _lib.lookupFunction<_C_create, _D_create>('create_tensor');
     destroyTensor = _lib.lookupFunction<_C_destroy, _D_destroy>(
       'destroy_tensor',
@@ -328,9 +329,11 @@ class CudaEngine {
       'tensor_zero_init',
     );
 
-    l2Normalize = _lib.lookupFunction<_C_l2norm, _D_l2norm>(
-      'l2_normalize_tensor',
-    );
+    // l2Normalize = _lib.lookupFunction<_C_l2norm, _D_l2norm>(
+    //   'l2_normalize_tensor',
+    // );
+
+    layerNorm = _lib.lookupFunction<_C_l2norm, _D_l2norm>('layer_norm_tensor');
   }
 
   void computeCostMatrix(
@@ -422,13 +425,19 @@ class Tensor {
     return Tensor._raw(h, [1, 1]);
   }
 
+  /// Matrix Multiplication (Dot Product)
+  /// Result shape: [M, N]
   Tensor matmul(Tensor o) {
-    int M = shape[0];
+    if (shape.length < 2 || o.shape.length < 2) {
+      throw ArgumentError(
+        "MatMul requires 2D Tensors. Shapes: $shape, ${o.shape}",
+      );
+    }
     int K = shape[1];
-    int N = o.shape[1];
-    // print('Matrix multiplcation');
     if (K != o.shape[0]) {
-      throw ArgumentError("invalid dimensions:A Col: $K, B Rol: ${o.shape[0]}");
+      throw ArgumentError(
+        "Dimension mismatch: A columns ($K) must match B rows (${o.shape[0]})",
+      );
     }
 
     return Tensor._raw(engine.matmulTensors(_handle, o._handle), [
@@ -441,18 +450,32 @@ class Tensor {
   Tensor pow(double e) => Tensor._raw(engine.powTensor(_handle, e), shape);
   Tensor log() => Tensor._raw(engine.logTensor(_handle), shape);
 
+  /// Internal helper for element-wise operations (Add, Sub, Mul, Div)
   Tensor _scalarOp(
     dynamic other,
     ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Void>)
     opFunc,
   ) {
     if (other is Tensor) {
+      // 1. Check for Exact Match
+      bool exactMatch = (length == other.length);
+
+      // 2. Check for Row-Broadcasting:
+      // This allows adding a [1, N] bias to a [M, N] matrix
+      bool isRowBroadcast = (other.shape[0] == 1 && other.shape[1] == shape[1]);
+
+      // if (!isRowBroadcast) {
+      //   throw ArgumentError(
+      //     "Element-wise shape mismatch: $shape vs ${other.shape}. "
+      //     "Shapes must match exactly or be a compatible row-vector for broadcasting.",
+      //   );
+      // }
+
       return Tensor._raw(opFunc(_handle, other._handle), shape);
-    } else if (other is double || other is int) {
+    } else if (other is num) {
       // Create a temporary 1x1 tensor for the scalar value
-      final tempScalar = Tensor.fill([1], (other as num).toDouble());
+      final tempScalar = Tensor.fill([1], other.toDouble());
       final resultHandle = opFunc(_handle, tempScalar.handle);
-      // tempScalar.dispose(); // Immediately free the temporary scalar handle
       return Tensor._raw(resultHandle, shape);
     }
     throw ArgumentError(
@@ -460,78 +483,32 @@ class Tensor {
     );
   }
 
-  Tensor _scalarMultiply(
-    dynamic other,
-    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Void>)
-    opFunc,
-  ) {
-    if (other is Tensor) {
-      return Tensor._raw(opFunc(_handle, other._handle), shape);
-    } else if (other is double || other is int) {
-      // Create a temporary 1x1 tensor for the scalar value
-      final tempScalar = Tensor.fill([1], (other as num).toDouble());
-      final resultHandle = opFunc(_handle, tempScalar.handle);
-      // tempScalar.dispose(); // Immediately free the temporary scalar handle
-      return Tensor._raw(resultHandle, shape);
-    }
-    throw ArgumentError(
-      "Operation not supported for type ${other.runtimeType}",
-    );
-  }
+  // --- Fixed Operators ---
 
-  // Fixed Operators
-  Tensor operator +(dynamic o) {
-    if (o is Tensor) {
-      int M = shape[0];
-      int K = shape[1];
-      int N = o.shape[1];
-      // print('Matrix multiplcation');
-      if (M != o.shape[0] && N != o.shape[1]) {
-        throw ArgumentError(
-          "invalid dimensions:A Col: $K, B Rol: ${o.shape[0]}",
-        );
-      }
-    }
-    return _scalarOp(o, engine.addTensors);
-  }
+  Tensor operator +(dynamic o) => _scalarOp(o, engine.addTensors);
 
-  Tensor operator -(dynamic o) {
-    // if (o is Tensor && !(o.shape[0] != shape[0] || o.shape[1] != shape[1])) {
-    //   throw UnsupportedError("invalid shape dimension");
-    //   // Reuse multiplication logic with reciprocal
-    //   // return this * (1.0 / other.toDouble());
-    // } else {
-    return _scalarOp(o, engine.subTensors);
-    // }
-  }
+  Tensor operator -(dynamic o) => _scalarOp(o, engine.subTensors);
 
   Tensor operator -() {
-    final left = Tensor.fromList(shape, List.generate(length, (_) => 0.0));
-    return left - this;
+    // Negation is just 0.0 - this
+    final zero = Tensor.fill(shape, 0.0);
+    return zero - this;
   }
 
+  /// Element-wise Multiplication (Hadamard Product)
+  /// Use this for Causal Masking!
   Tensor operator *(dynamic o) {
-    if (o is Tensor) {
-      return matmul(o);
-      // return _scalarOp(o, engine.matmulTensors);
-    } else if (o is num) {
-      return _scalarOp(o, engine.mulTensors);
-    }
-    throw ArgumentError("${o.runtimeType} is not supported");
+    // BUG FIX: Removed 'matmul' from here.
+    // This now strictly performs element-wise multiplication.
+    return _scalarOp(o, engine.mulTensors);
   }
 
-  // New Division Operator
   Tensor operator /(dynamic o) {
     if (o is num) {
-      if (o == 0 || o == 0.0) {
-        throw UnsupportedError("Division by zero scalar.");
-      }
-      // Reuse multiplication logic with reciprocal
+      if (o == 0) throw UnsupportedError("Division by zero.");
       return this * (1.0 / o.toDouble());
-    } else if (o is Tensor) {
-      return _scalarOp(o, engine.divTensors);
     }
-    throw UnsupportedError("Runtime type: ${o.runtimeType}.");
+    return _scalarOp(o, engine.divTensors);
   }
 
   // Cross Entropy Implementation
@@ -862,9 +839,21 @@ class Tensor {
     return result;
   }
 
+  // Tensor normalize({double eps = 1e-12}) {
+  //   final h = engine.l2Normalize(_handle, eps);
+  //   return Tensor._raw(h, shape);
+  // }
+
   Tensor normalize({double eps = 1e-12}) {
-    final h = engine.l2Normalize(_handle, eps);
-    return Tensor._raw(h, shape);
+    // This calls your optimized C++ L2 Row Normalize
+    final h = engine.layerNorm(_handle, eps);
+    final out = Tensor._raw(h, shape);
+
+    // CRITICAL: If your C++ engine doesn't automatically link children
+    // for autograd, you must do it here:
+    // out._children = [this];
+
+    return out;
   }
 
   String printMatrix() {
@@ -892,10 +881,35 @@ class Tensor {
     return output;
   }
 
+  // Tensor mseLoss(Tensor target) {
+  //   // 1. Calculate element-wise difference
+  //   final diff = this - target;
+
+  //   // 2. Square the differences
+  //   final squared = diff.pow(2.0);
+
+  //   // 3. Reduce to a single scalar (Mean)
+  //   final loss = squared.mean();
+
+  //   // IMPORTANT: You must track these intermediate tensors!
+  //   // If they are disposed of before .backward(), you get garbage gradients.
+  //   // tracker.addAll([diff, squared]);
+
+  //   return loss;
+  // }
+
   Tensor mseLoss(Tensor target) {
     final diff = this - target;
-    final loss = diff.pow(2.0);
-    return loss;
+    final squared = diff.pow(2.0);
+
+    // Use sum instead of mean if your mean is broken
+    final totalSum = squared.sum();
+
+    // Manually normalize the loss value
+    final scalarLoss = totalSum / (length).toDouble();
+
+    // tracker.addAll([diff, squared, totalSum]);
+    return scalarLoss;
   }
 }
 

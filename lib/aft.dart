@@ -59,9 +59,9 @@ class AFTAttention extends Module {
     }
     double mean = sum / data.length;
 
-    print(
-      '  [DEBUG $name] MaxAbs: ${maxVal.toStringAsFixed(4)} | Mean: ${mean.toStringAsFixed(4)} ${hasNaN ? "🚨 NAN DETECTED!" : ""}',
-    );
+    // print(
+    //   '  [DEBUG $name] MaxAbs: ${maxVal.toStringAsFixed(4)} | Mean: ${mean.toStringAsFixed(4)} ${hasNaN ? "🚨 NAN DETECTED!" : ""}',
+    // );
   }
 
   @override
@@ -104,17 +104,17 @@ void main() {
   // Use tighter gradClip in Adam
   final optimizer = Adam(aft.parameters(), lr: lr, gradClip: 0.1);
 
-  print('--- AFT Debug Training Run ---');
+  // print('--- AFT Debug Training Run ---');
 
   for (int step = 0; step < 10; step++) {
-    print('\nSTEP $step');
+    // print('\nSTEP $step');
     optimizer.zeroGrad();
 
     final output = aft.forward(x, tracker);
     final loss = output.mseLoss(target);
 
     final lVal = loss.fetchData()[0];
-    print('Current Loss: ${lVal.toStringAsFixed(6)}');
+    // print('Current Loss: ${lVal.toStringAsFixed(6)}');
 
     if (lVal.isNaN) {
       print("🛑 Training aborted: Loss is NaN.");
@@ -145,5 +145,5 @@ void _checkGradients(List<Tensor> params) {
       }
     }
   }
-  print('  [GRAD CHECK] Max Gradient Magnitude: ${maxGrad.toStringAsFixed(6)}');
+  // print('  [GRAD CHECK] Max Gradient Magnitude: ${maxGrad.toStringAsFixed(6)}');
 }

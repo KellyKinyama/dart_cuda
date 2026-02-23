@@ -8,50 +8,112 @@
 
 #define DLLEXPORT __attribute__((visibility("default")))
 
-__global__ void l2_normalize_fwd(float *a, float *out, int R, int C, float eps)
+// __global__ void l2_normalize_fwd(float *a, float *out, int R, int C, float eps)
+// {
+//     int i = blockIdx.x * blockDim.x + threadIdx.x;
+//     if (i < R)
+//     {
+//         float sum_sq = 0.0f;
+//         for (int j = 0; j < C; j++)
+//         {
+//             float val = a[i * C + j];
+//             sum_sq += val * val;
+//         }
+//         float norm = sqrtf(sum_sq + eps);
+//         for (int j = 0; j < C; j++)
+//         {
+//             out[i * C + j] = a[i * C + j] / norm;
+//         }
+//     }
+// }
+
+// __global__ void l2_normalize_bwd(float *a, float *go, float *ga, int R, int C, float eps)
+// {
+//     int i = blockIdx.x * blockDim.x + threadIdx.x;
+//     if (i < R)
+//     {
+//         float sum_sq = 0.0f;
+//         for (int j = 0; j < C; j++)
+//         {
+//             float val = a[i * C + j];
+//             sum_sq += val * val;
+//         }
+//         float norm_sq = sum_sq + eps;
+//         float norm = sqrtf(norm_sq);
+//         float norm_cubed = norm_sq * norm;
+
+//         float dot_product = 0.0f;
+//         for (int j = 0; j < C; j++)
+//         {
+//             dot_product += a[i * C + j] * go[i * C + j];
+//         }
+
+//         for (int j = 0; j < C; j++)
+//         {
+//             // Formula: (grad_out / norm) - (a * dot_product / norm^3)
+//             float grad = (go[i * C + j] / norm) - (a[i * C + j] * dot_product / norm_cubed);
+//             atomicAdd(&ga[i * C + j], grad);
+//         }
+//     }
+// }
+
+__global__ void layer_norm_fwd(float *a, float *out, int R, int C, float eps)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < R)
     {
-        float sum_sq = 0.0f;
-        for (int j = 0; j < C; j++)
-        {
-            float val = a[i * C + j];
-            sum_sq += val * val;
+        // 1. Compute Mean
+        float sum = 0.0f;
+        for (int j = 0; j < C; j++) sum += a[i * C + j];
+        float mean = sum / C;
+
+        // 2. Compute Variance
+        float var = 0.0f;
+        for (int j = 0; j < C; j++) {
+            float diff = a[i * C + j] - mean;
+            var += diff * diff;
         }
-        float norm = sqrtf(sum_sq + eps);
-        for (int j = 0; j < C; j++)
-        {
-            out[i * C + j] = a[i * C + j] / norm;
+        float inv_std = 1.0f / sqrtf((var / C) + eps);
+
+        // 3. Normalize
+        for (int j = 0; j < C; j++) {
+            out[i * C + j] = (a[i * C + j] - mean) * inv_std;
         }
     }
 }
 
-__global__ void l2_normalize_bwd(float *a, float *go, float *ga, int R, int C, float eps)
+__global__ void layer_norm_bwd(float *a, float *go, float *ga, int R, int C, float eps)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < R)
     {
-        float sum_sq = 0.0f;
-        for (int j = 0; j < C; j++)
-        {
-            float val = a[i * C + j];
-            sum_sq += val * val;
-        }
-        float norm_sq = sum_sq + eps;
-        float norm = sqrtf(norm_sq);
-        float norm_cubed = norm_sq * norm;
+        // 1. Recompute Mean and InvStd
+        float sum = 0.0f;
+        for (int j = 0; j < C; j++) sum += a[i * C + j];
+        float mean = sum / C;
 
-        float dot_product = 0.0f;
-        for (int j = 0; j < C; j++)
-        {
-            dot_product += a[i * C + j] * go[i * C + j];
+        float var = 0.0f;
+        for (int j = 0; j < C; j++) {
+            float diff = a[i * C + j] - mean;
+            var += diff * diff;
+        }
+        float inv_std = 1.0f / sqrtf((var / C) + eps);
+
+        // 2. Compute intermediate sums for the gradient
+        // dl/dx = (1/C * inv_std) * [ C*dl/dy - sum(dl/dy) - y * sum(dl/dy * y) ]
+        float sum_dl_dy = 0.0f;
+        float sum_dl_dy_y = 0.0f;
+        for (int j = 0; j < C; j++) {
+            float dy = go[i * C + j];
+            float y = (a[i * C + j] - mean) * inv_std;
+            sum_dl_dy += dy;
+            sum_dl_dy_y += dy * y;
         }
 
-        for (int j = 0; j < C; j++)
-        {
-            // Formula: (grad_out / norm) - (a * dot_product / norm^3)
-            float grad = (go[i * C + j] / norm) - (a[i * C + j] * dot_product / norm_cubed);
+        // 3. Final Gradient
+        for (int j = 0; j < C; j++) {
+            float y = (a[i * C + j] - mean) * inv_std;
+            float grad = inv_std * (go[i * C + j] - (sum_dl_dy / C) - (y * sum_dl_dy_y / C));
             atomicAdd(&ga[i * C + j], grad);
         }
     }
@@ -258,65 +320,69 @@ __global__ void log_bwd(float *a, float *go, float *ga, int n)
 __global__ void aft_full_fwd(float *Q, float *K, float *V, float *WB, float *out,
                              int T, int D, bool masked)
 {
-    int t = blockIdx.x * blockDim.x + threadIdx.x; // Current timestep
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
     if (t < T)
     {
         for (int d = 0; d < D; d++)
         {
-            float numerator = 0.0f;
-            float denominator = 0.0f;
             int limit = masked ? (t + 1) : T;
 
+            // --- Phase 1: Find Max for Numerical Stability ---
+            float max_val = -1e20f;
             for (int tp = 0; tp < limit; tp++)
             {
-                // Bias index: w[t, tp]
-                float w_ttp = WB[t * T + tp];
-                // exp(K[tp, d] + w_ttp)
-                float exp_weight = expf(K[tp * D + d] + w_ttp);
+                float val = K[tp * D + d] + WB[t * T + tp];
+                if (val > max_val)
+                    max_val = val;
+            }
 
+            // --- Phase 2: Compute Stable Weighted Sum ---
+            float numerator = 0.0f;
+            float denominator = 0.0f;
+            for (int tp = 0; tp < limit; tp++)
+            {
+                // exp(val - max_val) is always <= 1.0f
+                float exp_weight = expf(K[tp * D + d] + WB[t * T + tp] - max_val);
                 numerator += exp_weight * V[tp * D + d];
                 denominator += exp_weight;
             }
-            // Y[t, d] = sigmoid(Q[t, d]) * (num / (den + epsilon))
+
             float sigQ = 1.0f / (1.0f + expf(-Q[t * D + d]));
-            out[t * D + d] = sigQ * (numerator / (denominator + 1e-9f));
+            out[t * D + d] = sigQ * (numerator / (denominator + 1e-6f));
         }
     }
 }
-
 __global__ void aft_cross_fwd(float *Q, float *K, float *V, float *WB, float *out,
                               int TDec, int TEnc, int D)
 {
-    // Each thread handles one row (timestep) of the Decoder output
     int t = blockIdx.x * blockDim.x + threadIdx.x;
-
     if (t < TDec)
     {
         for (int d = 0; d < D; d++)
         {
-            float numerator = 0.0f;
-            float denominator = 0.0f;
-
-            // Decoder position 't' attends to all Encoder positions 'tp'
+            // Find Max
+            float max_val = -1e20f;
             for (int tp = 0; tp < TEnc; tp++)
             {
-                // posBias is [TDec, TEnc]
-                float w_ttp = WB[t * TEnc + tp];
+                float val = K[tp * D + d] + WB[t * TEnc + tp];
+                if (val > max_val)
+                    max_val = val;
+            }
 
-                // exp(K[tp, d] + w_ttp)
-                float exp_weight = expf(K[tp * D + d] + w_ttp);
-
+            float numerator = 0.0f;
+            float denominator = 0.0f;
+            for (int tp = 0; tp < TEnc; tp++)
+            {
+                float exp_weight = expf(K[tp * D + d] + WB[t * TEnc + tp] - max_val);
                 numerator += exp_weight * V[tp * D + d];
                 denominator += exp_weight;
             }
 
-            // Sigmoid(Q) is applied here for efficiency
             float sigQ = 1.0f / (1.0f + expf(-Q[t * D + d]));
-            out[t * D + d] = sigQ * (numerator / (denominator + 1e-9f));
+            out[t * D + d] = sigQ * (numerator / (denominator + 1e-6f));
         }
     }
 }
-
 __global__ void aft_cross_bwd(
     float *Q, float *K, float *V, float *WB,
     float *grad_out,
@@ -324,48 +390,50 @@ __global__ void aft_cross_bwd(
     int TDec, int TEnc, int D)
 {
     int t = blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= TDec)
-        return;
+    if (t >= TDec) return;
 
-    for (int d = 0; d < D; d++)
-    {
-        // --- Re-calculate forward components for this specific d ---
+    for (int d = 0; d < D; d++) {
+        // --- 1. Re-calculate Stable Forward Components ---
+        float max_val = -1e20f;
+        for (int tp = 0; tp < TEnc; tp++) {
+            float v = K[tp * D + d] + WB[t * TEnc + tp];
+            if (v > max_val) max_val = v;
+        }
+
         float num = 0.0f;
         float den = 0.0f;
-        for (int tp = 0; tp < TEnc; tp++)
-        {
-            float weight = expf(K[tp * D + d] + WB[t * TEnc + tp]);
+        for (int tp = 0; tp < TEnc; tp++) {
+            float weight = expf(K[tp * D + d] + WB[t * TEnc + tp] - max_val);
             num += weight * V[tp * D + d];
             den += weight;
         }
 
-        float den_inv = 1.0f / (den + 1e-9f);
+        float den_inv = 1.0f / (den + 1e-6f);
         float ratio = num * den_inv;
         float sigQ = 1.0f / (1.0f + expf(-Q[t * D + d]));
         float gO = grad_out[t * D + d];
 
-        // 1. Gradient for Q: dL/dQ = gO * ratio * sigQ * (1 - sigQ)
-        atomicAdd(&grad_Q[t * D + d], gO * ratio * sigQ * (1.0f - sigQ));
+        // --- 2. Compute Gradients ---
+        // Gradient for Q (Sigmoid derivative)
+        float dQ = gO * ratio * sigQ * (1.0f - sigQ);
+        atomicAdd(&grad_Q[t * D + d], dQ);
 
-        // 2. Gradients for K, V, and WB (Loop through encoder steps)
-        for (int tp = 0; tp < TEnc; tp++)
-        {
-            float weight = expf(K[tp * D + d] + WB[t * TEnc + tp]);
-
-            // dL/dV = gO * sigQ * (weight / den)
+        for (int tp = 0; tp < TEnc; tp++) {
+            float weight = expf(K[tp * D + d] + WB[t * TEnc + tp] - max_val);
+            
+            // dL/dV
             float dV = gO * sigQ * (weight * den_inv);
             atomicAdd(&grad_V[tp * D + d], dV);
 
-            // dL/dWeight (common for K and WB)
-            // Derivative of (num/den) w.r.t weight_i is: (V_i * den - num) / den^2
+            // dL/dK and dL/dWB
+            // The derivative of (num/den) w.r.t the exponent (K+W) is weight * (V - ratio) / den
             float dW = gO * sigQ * weight * (V[tp * D + d] - ratio) * den_inv;
 
             atomicAdd(&grad_K[tp * D + d], dW);
-            atomicAdd(&grad_WB[t * TEnc + tp], dW); // Note: WB sum is across D
+            atomicAdd(&grad_WB[t * TEnc + tp], dW);
         }
     }
 }
-
 __global__ void concat_axis1_fwd(float **inputs, float *out, int num_tensors, int rows, int cols_per_tensor)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -504,54 +572,43 @@ __global__ void embedding_bwd(int *indices, float *go, float *gwte, float *gwpe,
     }
 }
 
-__global__ void cross_entropy_fwd(float *logits, int *targets, float *loss, int T, int V)
+// Forward Kernel: Computes Log-Sum-Exp and blended Cross Entropy loss
+__global__ void cross_entropy_fwd(float *logits, int *targets, float *loss, int T, int V, float epsilon)
 {
     int t = blockIdx.x * blockDim.x + threadIdx.x;
     if (t < T)
     {
-        // Only print for the first index so we don't flood the terminal
-        // if (t == 0)
-        // {
-        //     printf("[GPU KERNEL] T=%d, V=%d, target[0]=%d, logit[0]=%f\n", T, V, targets[0], logits[0]);
-        // }
-        // 1. Find max for numerical stability
-        // float max_val = -1e30f;
-        float max_val=-(1.0 / 0.0);
-        float sum_logits = 0.0f; // Track sum for label smoothing
-        for (int v = 0; v < V; v++)
-        {
-            float val = logits[t * V + v];
-            if (val > max_val)
-                max_val = val;
-            sum_logits += val;
+        // 1. Find max for numerical stability (prevents exp() overflow)
+        float max_val = -1e30f;
+        for (int v = 0; v < V; v++) {
+            if (logits[t * V + v] > max_val) max_val = logits[t * V + v];
         }
 
         // 2. Compute Log-Sum-Exp
-        float lse_sum = 0.0f;
-        for (int v = 0; v < V; v++)
-        {
-            lse_sum += expf(logits[t * V + v] - max_val);
+        float sum_exp = 0.0f;
+        float sum_logits = 0.0f;
+        for (int v = 0; v < V; v++) {
+            float val = logits[t * V + v];
+            sum_exp += expf(val - max_val);
+            sum_logits += val;
         }
-        float lse = max_val + logf(lse_sum + 1e-12f);
+        float lse = max_val + logf(sum_exp + 1e-12f);
 
-        // 3. Label Smoothing Logic
-        // We act as if the target is 90% likely and the other 10%
-        // is spread across all other moves.
-        float epsilon = 1.1f;
+        // 3. Blended Loss (Label Smoothing)
         int target_idx = targets[t];
         float logit_target = logits[t * V + target_idx];
-
-        // Standard CE Loss
+        
         float ce_loss = lse - logit_target;
-
-        // Smoothing term: lse - average_logit
         float smooth_loss = lse - (sum_logits / V);
 
-        // Final blended loss
+        // epsilon should be small (e.g., 0.1). 
+        // Loss = (1-eps)*CE + eps*Smooth
         loss[t] = (1.0f - epsilon) * ce_loss + epsilon * smooth_loss;
     }
 }
-__global__ void cross_entropy_bwd(float *logits, int *targets, float *grad_logits, int T, int V, float grad_output)
+
+// Backward Kernel: Computes (Softmax - Target) / T
+__global__ void cross_entropy_bwd(float *logits, int *targets, float *grad_logits, int T, int V, float grad_output, float epsilon)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < T * V)
@@ -560,45 +617,28 @@ __global__ void cross_entropy_bwd(float *logits, int *targets, float *grad_logit
         int v = idx % V;
         int target_idx = targets[t];
 
-        // 1. Recompute max for stable softmax
+        // 1. Recompute Softmax for this row
         float max_val = -1e30f;
-        for (int i = 0; i < V; i++)
-        {
-            float val = logits[t * V + i];
-            if (val > max_val)
-                max_val = val;
+        for (int i = 0; i < V; i++) {
+            if (logits[t * V + i] > max_val) max_val = logits[t * V + i];
         }
 
-        // 2. Recompute sum of exponentials
         float sum_exp = 0.0f;
-        for (int i = 0; i < V; i++)
-        {
+        for (int i = 0; i < V; i++) {
             sum_exp += expf(logits[t * V + i] - max_val);
         }
 
-        // 3. Current Softmax probability
         float softmax = expf(logits[idx] - max_val) / (sum_exp + 1e-12f);
 
-        // 4. Label Smoothing Logic
-        float epsilon = 1.1f;
+        // 2. Smoothed Target Probability
+        // For a correct move, target_prob is approx (1 - epsilon)
+        // For a wrong move, target_prob is approx (epsilon / V)
         float indicator = (v == target_idx) ? 1.0f : 0.0f;
+        float target_prob = (1.0f - epsilon) * indicator + (epsilon / (float)V);
 
-        // target_prob for 4098 classes with eps 0.1:
-        // Correct move: 0.90002
-        // Wrong moves:  0.000024
-        float target_prob = (1.0f - epsilon) * indicator + (epsilon / V);
-
-        // 5. Scaling Correction
-        // We multiply by grad_output (usually 1.0) and do NOT divide by T here
-        // if you want the full gradient signal to reach Adam.
-        // Usually, the loss function in the autograd system handles the 1/T scaling.
-        grad_logits[idx] = (softmax - target_prob) * grad_output;
-
-        // DEBUG: Print gradient for the first move of the first sequence
-        if (idx == target_idx)
-        {
-            // printf("[GRAD DEBUG] target_prob: %f, softmax: %f, grad: %f\n", target_prob, softmax, grad_logits[idx]);
-        }
+        // 3. Final Gradient calculation
+        // We MUST divide by T because the forward loss was averaged (total_loss / T)
+        grad_logits[idx] = ((softmax - target_prob) * grad_output) / (float)T;
     }
 }
 
@@ -648,7 +688,7 @@ __global__ void adam_kernel(float *p, float *g, float *m, float *v,
 }
 
 __global__ void sdg_kernel(float *p, float *g,
-                            int size, float lr)
+                           int size, float lr)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size)
@@ -1223,13 +1263,15 @@ extern "C"
         return (void *)out;
     }
 
-    DLLEXPORT void *cross_entropy_loss(void *lh, int *h_targets, int T, int V)
+    // Note: In a real engine, you'd pass epsilon from Dart. Hardcoding 0.1 for now.
+    const float GLOBAL_EPSILON = 0.1f;
+
+    void *cross_entropy_loss(void *lh, int *h_targets, int T, int V)
     {
         Tensor *logits = (Tensor *)lh;
-        Tensor *out = new Tensor(1, 1); // Scalar loss
+        Tensor *out = new Tensor(1, 1); 
         out->_children = {logits};
 
-        // Move targets to GPU
         int *d_targets;
         cudaMalloc(&d_targets, T * sizeof(int));
         cudaMemcpy(d_targets, h_targets, T * sizeof(int), cudaMemcpyHostToDevice);
@@ -1237,35 +1279,36 @@ extern "C"
         float *d_losses;
         cudaMalloc(&d_losses, T * sizeof(float));
 
-        cross_entropy_fwd<<<(T + 255) / 256, 256>>>(logits->data_gpu,
-             d_targets,
-              d_losses,
-               T, V);
+        cross_entropy_fwd<<<(T + 255) / 256, 256>>>(
+            logits->data_gpu, d_targets, d_losses, T, V, GLOBAL_EPSILON
+        );
 
-        // Sum losses on CPU for the scalar result (simple for now)
+        // Average the loss for the scalar output
         std::vector<float> h_losses(T);
         cudaMemcpy(h_losses.data(), d_losses, T * sizeof(float), cudaMemcpyDeviceToHost);
+        
         float total_loss = 0;
-        for (float l : h_losses)
-            total_loss += l;
-        total_loss /= T;
+        for (float l : h_losses) total_loss += l;
+        float mean_loss = total_loss / T;
 
-        cudaMemcpy(out->data_gpu, &total_loss, sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(out->data_gpu, &mean_loss, sizeof(float), cudaMemcpyHostToDevice);
 
+        // Backward Lambda
         out->_backward = [out, logits, d_targets, T, V]()
         {
             float h_grad_out;
             cudaMemcpy(&h_grad_out, out->grad_gpu, sizeof(float), cudaMemcpyDeviceToHost);
 
             cross_entropy_bwd<<<(T * V + 255) / 256, 256>>>(
-                logits->data_gpu, d_targets, logits->grad_gpu, T, V, h_grad_out);
-            cudaFree(d_targets);
+                logits->data_gpu, d_targets, logits->grad_gpu, T, V, h_grad_out, GLOBAL_EPSILON
+            );
+
+            cudaFree(d_targets); // Cleanup inside lambda
         };
 
         cudaFree(d_losses);
         return (void *)out;
     }
-    
 
     DLLEXPORT void tensor_to_host(void *handle, float *h_data)
     {
@@ -1555,27 +1598,48 @@ extern "C"
         cudaMemset(p->data_gpu, 0, size * sizeof(float));
     }
 
-    DLLEXPORT void *l2_normalize_tensor(void *ah, float eps)
+    // DLLEXPORT void *l2_normalize_tensor(void *ah, float eps)
+    // {
+    //     Tensor *a = (Tensor *)ah;
+    //     int R = a->rows;
+    //     int C = a->cols;
+    //     Tensor *out = new Tensor(R, C);
+    //     out->_children = {a};
+
+    //     int threads = 256;
+    //     int blocks = (R + threads - 1) / threads;
+
+    //     l2_normalize_fwd<<<blocks, threads>>>(a->data_gpu, out->data_gpu, R, C, eps);
+
+    //     out->_backward = [out, a, R, C, eps, blocks, threads]()
+    //     {
+    //         l2_normalize_bwd<<<blocks, threads>>>(
+    //             a->data_gpu,
+    //             out->grad_gpu,
+    //             a->grad_gpu,
+    //             R, C, eps);
+    //     };
+    //     return (void *)out;
+    // }
+
+    DLLEXPORT void *layer_norm_tensor(void *ah, float eps)
+{
+    Tensor *a = (Tensor *)ah;
+    int R = a->rows;
+    int C = a->cols;
+    Tensor *out = new Tensor(R, C);
+    out->_children = {a};
+
+    int threads = 256;
+    int blocks = (R + threads - 1) / threads;
+
+    layer_norm_fwd<<<blocks, threads>>>(a->data_gpu, out->data_gpu, R, C, eps);
+
+    out->_backward = [out, a, R, C, eps, blocks, threads]()
     {
-        Tensor *a = (Tensor *)ah;
-        int R = a->rows;
-        int C = a->cols;
-        Tensor *out = new Tensor(R, C);
-        out->_children = {a};
-
-        int threads = 256;
-        int blocks = (R + threads - 1) / threads;
-
-        l2_normalize_fwd<<<blocks, threads>>>(a->data_gpu, out->data_gpu, R, C, eps);
-
-        out->_backward = [out, a, R, C, eps, blocks, threads]()
-        {
-            l2_normalize_bwd<<<blocks, threads>>>(
-                a->data_gpu,
-                out->grad_gpu,
-                a->grad_gpu,
-                R, C, eps);
-        };
-        return (void *)out;
-    }
+        layer_norm_bwd<<<blocks, threads>>>(
+            a->data_gpu, out->grad_gpu, a->grad_gpu, R, C, eps);
+    };
+    return (void *)out;
+}
 }
