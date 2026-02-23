@@ -1,6 +1,6 @@
 name: dart_cuda
 description: A high-performance Dart & CUDA Deep Learning engine with Autograd and AFT support.
-version: 1.0.0
+version: 1.0.1
 repository: https://github.com/KellyKinyama/dart_cuda
 topics: [machine-learning, cuda, gpu, ai]
 

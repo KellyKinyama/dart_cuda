@@ -202,6 +202,38 @@ typedef _C_l2norm =
 typedef _D_l2norm =
     ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, double);
 
+// C Signature (Matching the C++ wrapper)
+typedef _C_im2col =
+    ffi.Void Function(
+      ffi.Pointer<ffi.Void> input,
+      ffi.Int32 channels,
+      ffi.Int32 height,
+      ffi.Int32 width,
+      ffi.Int32 kh,
+      ffi.Int32 kw,
+      ffi.Int32 ph,
+      ffi.Int32 pw,
+      ffi.Int32 sh,
+      ffi.Int32 sw,
+      ffi.Pointer<ffi.Void> output,
+    );
+
+// Dart Signature
+typedef _D_im2col =
+    void Function(
+      ffi.Pointer<ffi.Void> input,
+      int channels,
+      int height,
+      int width,
+      int kH,
+      int kW,
+      int pH,
+      int pW,
+      int sH,
+      int sW,
+      ffi.Pointer<ffi.Void> output,
+    );
+
 class CudaEngine {
   late ffi.DynamicLibrary _lib;
   late _D_create createTensor;
@@ -243,6 +275,8 @@ class CudaEngine {
   late _XavierInitDart _tensorXavierInit;
   // late _D_l2norm l2Normalize; // Add this
   late _D_l2norm layerNorm;
+  late _D_im2col im2col;
+  late _D_im2col col2im;
 
   CudaEngine() {
     _lib = ffi.DynamicLibrary.open('${Directory.current.path}/libmat_mul.so');
@@ -334,6 +368,8 @@ class CudaEngine {
     // );
 
     layerNorm = _lib.lookupFunction<_C_l2norm, _D_l2norm>('layer_norm_tensor');
+    im2col = _lib.lookupFunction<_C_im2col, _D_im2col>('im2col_cuda');
+    col2im = _lib.lookupFunction<_C_im2col, _D_im2col>('col2im_cuda');
   }
 
   void computeCostMatrix(
