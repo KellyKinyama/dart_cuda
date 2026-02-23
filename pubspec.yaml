@@ -13,6 +13,7 @@ dependencies:
   ffi: ^2.1.4
   bishop: ^1.4.4
   test: ^1.29.0
+  image: ^4.8.0
 
 dev_dependencies:
   lints: ^6.0.0
