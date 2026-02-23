@@ -68,6 +68,8 @@ void main() async {
   final optimizer = Adam(gpt.parameters(), lr: 0.0005);
   final dummyEnc = Tensor.zeros([1, embedSize]);
 
+  await loadModuleBinary(gpt, 'shakespeare_gpt.bin');
+
   print("🎭 Training on Shakespeare: Layers: $numLayers, Embed: $embedSize");
 
   // 3. Optimized Training Loop

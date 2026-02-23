@@ -24,7 +24,7 @@ class ViTBackbone extends Module {
     int numLayers = 4,
     int numHeads = 4,
   }) : transformerEncoder = TransformerEncoder(
-         vocabSize: 0, // Not used for vision
+         vocabSize: 1, // Not used for vision
          embedSize: embedSize,
          blockSize: (imageSize ~/ patchSize) * (imageSize ~/ patchSize) + 1,
          numLayers: numLayers,

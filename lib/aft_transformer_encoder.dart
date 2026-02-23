@@ -18,9 +18,9 @@ class TransformerEncoder extends Module {
   final LayerNorm finalLayerNorm;
 
   TransformerEncoder({
-    this.vocabSize = 100,
-    this.embedSize = 64,
-    this.blockSize = 128,
+    required this.vocabSize,
+    required this.embedSize,
+    required this.blockSize,
     this.numLayers = 6,
     this.numHeads = 8,
   }) : assert(

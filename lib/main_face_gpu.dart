@@ -13,6 +13,7 @@ void main() {
     imageSize: 32,
     patchSize: 8,
     embedSize: 64,
+
     outputDim: 64,
     numLayers: 2,
   );
@@ -31,7 +32,7 @@ void main() {
   print("🔥 Starting GPU Training Loop...");
 
   // try {
-  for (int epoch = 0; epoch <= 3000; epoch++) {
+  for (int epoch = 0; epoch <= 100; epoch++) {
     List<Tensor> tracker = [];
     optimizer.zeroGrad();
 

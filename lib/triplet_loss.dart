@@ -31,9 +31,9 @@ class TripletLossGPU extends Module {
     tracker.addAll([diffPos, diffNeg, distP, distN, rawLoss, loss]);
 
     // 🔍 Optional Debugging (keep it minimal for performance)
-    if (loss.fetchData()[0] > 100) {
-      print("⚠️ High Loss detected: ${loss.fetchData()[0]}");
-    }
+    // if (loss.fetchData()[0] > 100) {
+    //   print("⚠️ High Loss detected: ${loss.fetchData()[0]}");
+    // }
 
     return loss;
   }

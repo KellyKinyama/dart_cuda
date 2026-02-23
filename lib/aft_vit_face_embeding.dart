@@ -16,6 +16,7 @@ class ViTFaceEmbeddingGPU extends Module {
          imageSize: imageSize,
          patchSize: patchSize,
          embedSize: embedSize,
+        
          numLayers: numLayers,
        ) {
     if (embedSize != outputDim) {
