@@ -39,7 +39,7 @@ class Adam {
 
     for (int i = 0; i < params.length; i++) {
       // 1. Clip Gradients: Clamps outliers to prevent NaN weight updates
-      // engine.clipGradients(params[i].handle, gradClip);
+      engine.clipGradients(params[i].handle, gradClip);
 
       // 2. Adam Update: The heavy lifting happens inside the CUDA kernel
       engine.adamStep(

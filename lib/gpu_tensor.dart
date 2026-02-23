@@ -891,6 +891,12 @@ class Tensor {
     }
     return output;
   }
+
+  Tensor mseLoss(Tensor target) {
+    final diff = this - target;
+    final loss = diff.pow(2.0);
+    return loss;
+  }
 }
 
 // void main() {
