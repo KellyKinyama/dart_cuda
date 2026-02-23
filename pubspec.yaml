@@ -1,7 +1,8 @@
 name: dart_cuda
-description: A sample command-line application.
+description: A high-performance Dart & CUDA Deep Learning engine with Autograd and AFT support.
 version: 1.0.0
 repository: https://github.com/KellyKinyama/dart_cuda
+topics: [machine-learning, cuda, gpu, ai]
 
 environment:
   sdk: ^3.9.3
