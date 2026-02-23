@@ -33,6 +33,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.13.0"
+  bishop:
+    dependency: "direct main"
+    description:
+      name: bishop
+      sha256: "49739eff3ff06ec44f1660ff06baec6b44bb8926114b5f6bbed96f24d11a98d3"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.4"
   boolean_selector:
     dependency: transitive
     description:
