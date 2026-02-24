@@ -3,9 +3,9 @@ import 'dart:math' as math;
 import 'package:dart_cuda/adam.dart';
 // import 'package:dart_cuda/aft_transformer_decoder.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
-import 'package:dart_cuda/network_utils.dart';
+// import 'package:dart_cuda/network_utils.dart';
 import '../aft_muzero_transformer_decoder.dart';
-import 'muzero_greedy_agent.dart'; // Your refined Agent class
+import 'mu_zero_greedy_agent2.dart'; // Your refined Agent class
 
 class CharTokenizer {
   late List<String> chars;
@@ -63,7 +63,7 @@ void main() async {
 
   print("🎭 Training MuZero-Shakespeare...");
 
-  for (int epoch = 0; epoch < 5000; epoch++) {
+  for (int epoch = 0; epoch < 1000; epoch++) {
     optimizer.zeroGrad();
     List<Tensor> tracker = [];
     double totalLoss = 0;
@@ -127,7 +127,9 @@ void generateMuZeroShakespeare(
   // Initial thought
   Tensor rawState = agent.representation(promptTokens, initTracker);
   Tensor currentState = rawState.detach();
-  for (var t in initTracker) t.dispose();
+  for (var t in initTracker) {
+    t.dispose();
+  }
 
   for (int i = 0; i < length; i++) {
     List<Tensor> stepTracker = [];
@@ -152,7 +154,9 @@ void generateMuZeroShakespeare(
 
     // 4. Memory Handover
     currentState.dispose();
-    for (var t in stepTracker) t.dispose();
+    for (var t in stepTracker) {
+      t.dispose();
+    }
     currentState = nextState;
   }
 
@@ -167,7 +171,9 @@ int sampleNucleus(List<double> row, {double temp = 1.0, double topP = 0.9}) {
 
   // Normalize
   double sumExp = probs.reduce((a, b) => a + b);
-  for (int i = 0; i < probs.length; i++) probs[i] /= sumExp;
+  for (int i = 0; i < probs.length; i++) {
+    probs[i] /= sumExp;
+  }
 
   // Sort for Nucleus
   List<MapEntry<int, double>> indexedProbs = probs.asMap().entries.toList();
