@@ -953,6 +953,17 @@ class Tensor {
     // tracker.addAll([diff, squared, totalSum]);
     return scalarLoss;
   }
+
+  Tensor detach() {
+    // Pull data from GPU
+    final values = fetchData();
+
+    // Create a brand-new tensor with identical data
+    // This tensor has NO autograd history
+    final detached = Tensor.fromList(shape, values);
+
+    return detached;
+  }
 }
 
 // void main() {

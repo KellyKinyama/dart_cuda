@@ -33,7 +33,7 @@ void main() {
   ];
 
   // --- TRAIN FOR MORE THAN 0 EPOCHS ---
-  trainMuZero(agent, trainingData, 500); // 500 epochs to actually learn
+  trainMuZero(agent, trainingData, 100); // 500 epochs to actually learn
 
   print("\n--- Generation After Training ---");
   generateMuZeroGreedy(agent, [stoi["<start>"]!], 4, itos);
@@ -44,49 +44,74 @@ void trainMuZero(
   List<int> targetSequence,
   int epochs,
 ) {
-  final optimizer = Adam(agent.model.parameters(), lr: 0.01);
-  final List<Tensor> tracker = [];
+  final optimizer = Adam(agent.model.parameters(), lr: 0.001);
 
-  for (int epoch = 0; epoch <= epochs; epoch++) {
+  for (int epoch = 0; epoch < epochs; epoch++) {
     optimizer.zeroGrad();
-    double totalEpochLoss = 0;
+    double totalEpochLoss = 0.0;
 
-    // Start state
+    // Tracker is per-epoch
+    final List<Tensor> tracker = [];
+
+    // Start from first token
     Tensor currentState = agent.representation([targetSequence[0]], tracker);
 
     for (int t = 0; t < targetSequence.length - 1; t++) {
-      int target = targetSequence[t + 1];
+      final int target = targetSequence[t + 1];
 
-      Tensor logits = agent.predictPolicy(currentState, tracker);
-      final loss = logits.crossEntropy([target]);
+      // --- Policy ---
+      final Tensor logits = agent.predictPolicy(currentState, tracker);
 
-      // 1. Backward must happen while logits and currentState are ALIVE
+      final Tensor loss = logits.crossEntropy([target]);
+
+      // Backprop while graph exists
       loss.backward();
 
       totalEpochLoss += loss.fetchData()[0];
 
-      // 2. Dynamics
-      Tensor nextState = agent.dynamics(currentState, target, t + 1, tracker);
-      currentState = nextState;
+      // --- Dynamics ---
+      final Tensor nextState = agent.dynamics(
+        currentState,
+        target,
+        t + 1,
+        tracker,
+      );
+
+      currentState = nextState.detach();
+
+      // 🔑 HARD GRAPH CUT:
+      // Dispose entire step graph and re-enter model cleanly
+      for (final t in tracker) {
+        t.dispose();
+      }
+      tracker.clear();
+
+      // Recompute state WITHOUT history (no BPTT)
+      currentState = agent.representation(
+        targetSequence.sublist(0, t + 2),
+        tracker,
+      );
     }
 
-    // 3. THE STEP must happen BEFORE the tracker disposal
+    // Update parameters
     optimizer.step();
 
-    // 4. NOW it is safe to dispose
-    for (var t in tracker) {
+    // Final cleanup
+    for (final t in tracker) {
       t.dispose();
     }
     tracker.clear();
 
     if (epoch % 50 == 0) {
-      // Debug: Print first 3 weights of lmHead to see if they are changing
-      var wSample = agent.model.lmHead.parameters()[0].fetchData().sublist(
+      final wSample = agent.model.lmHead.parameters()[0].fetchData().sublist(
         0,
         3,
       );
+
       print(
-        "Epoch ${epoch.toString().padLeft(3)} | Loss: ${totalEpochLoss.toStringAsFixed(6)} | Weights: $wSample",
+        "Epoch ${epoch.toString().padLeft(3)} | "
+        "Loss: ${totalEpochLoss.toStringAsFixed(6)} | "
+        "Weights: $wSample",
       );
     }
   }
@@ -98,33 +123,30 @@ void generateMuZeroGreedy(
   int maxLength,
   Map<int, String> itos,
 ) {
-  List<Tensor> tracker = [];
-  List<int> generated = List.from(prompt);
-  Tensor currentState = agent.representation(prompt, tracker);
+  final List<int> generated = List.from(prompt);
 
   for (int i = 0; i < maxLength; i++) {
-    Tensor logits = agent.predictPolicy(currentState, tracker);
-    int bestToken = argMax(logits.fetchData());
-    generated.add(bestToken);
+    // Fresh tracker PER STEP (no graphs survive)
+    final List<Tensor> tracker = [];
 
+    // Recompute state from all known tokens
+    final Tensor state = agent.representation(generated, tracker);
+
+    final Tensor logits = agent.predictPolicy(state, tracker);
+
+    final int bestToken = argMax(logits.fetchData());
+
+    generated.add(bestToken);
     print("Step $i -> ${itos[bestToken]}");
 
-    // Compute next before destroying current
-    Tensor nextState = agent.dynamics(currentState, bestToken, i + 1, tracker);
+    // Safe cleanup
+    for (final t in tracker) {
+      t.dispose();
+    }
 
-    // Clean up step T
-    logits.dispose();
-    if (i > 0) currentState.dispose();
-
-    // Wipe intermediate math from tracker but KEEP the weights
-    // (Note: ensure your agent weights aren't in the tracker!)
-    for (var t in tracker) t.dispose();
-    tracker.clear();
-
-    currentState = nextState;
-    if (bestToken == 2) break;
+    if (bestToken == 2) break; // "."
   }
-  currentState.dispose();
+
   print("\nFinal Result: ${generated.map((id) => itos[id]).join(" ")}");
 }
 
