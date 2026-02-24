@@ -28,7 +28,9 @@ class TripletLoader {
   }
 
   /// Loads a batch of [batchSize] triplets directly into GPU memory
-  Map<String, Tensor> nextBatch(int batchSize, List<Tensor> tracker) {
+  Map<String, Tensor> nextBatch(
+    int batchSize, //, List<Tensor> tracker
+  ) {
     List<double> anchors = [];
     List<double> positives = [];
     List<double> negatives = [];
@@ -71,7 +73,7 @@ class TripletLoader {
       imageSize * imageSize * 3,
     ], negatives);
 
-    tracker.addAll([anchorTensor, positiveTensor, negativeTensor]);
+    // tracker.addAll([anchorTensor, positiveTensor, negativeTensor]);
 
     return {
       'anchor': anchorTensor,
@@ -89,4 +91,11 @@ class TripletLoader {
         .expand((e) => e)
         .toList();
   }
+}
+
+void main() {
+  final imagesFolder = 'Original Images';
+
+  final tripletLoader = TripletLoader(imagesFolder, 16);
+  print(tripletLoader._identityMap);
 }
