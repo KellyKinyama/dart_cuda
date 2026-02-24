@@ -32,32 +32,42 @@ class MuZeroGreedyAgent {
   }
 
   // --- g(s, a): DYNAMICS ---
-  // Tensor dynamics(Tensor state, int action, List<Tensor> tracker) {
-  //   // Get embedding for the token
-  //   final actionEmb = model.wte.getRow(action);
-  //   tracker.add(actionEmb);
-
-  //   // Transition: nextState = first transformer block forward
-  //   // We treat the current latent state as the input to the next "time step"
-  //   final combined = state + actionEmb;
-  //   tracker.add(combined);
-
-  //   return model.blocks[0].forward(combined, dummyEnc, tracker);
-  // }
-
   Tensor dynamics(Tensor state, int action, int step, List<Tensor> tracker) {
     final actionEmb = model.wte.getRow(action);
     final posEmb = model.wpe.getRow(step % model.blockSize);
 
-    final combined = state + actionEmb + posEmb;
+    // 🔥 MULTIPLY the action signal to ensure it actually shifts the vector
+    // If your engine doesn't have .mul(), try actionEmb + actionEmb + actionEmb
+    final strongAction = actionEmb * (5.0);
+
+    final stateWithAction = state + strongAction;
+    final combined = stateWithAction + posEmb;
+
     final nextState = model.blocks[0].forward(combined, dummyEnc, tracker);
 
-    // Ensure intermediate results are tracked so they aren't cleaned up too early
-    tracker.addAll([actionEmb, posEmb, combined]);
-    tracker.add(nextState);
-
+    tracker.addAll([
+      actionEmb,
+      strongAction,
+      posEmb,
+      stateWithAction,
+      combined,
+      nextState,
+    ]);
     return nextState;
   }
+  // Tensor dynamics(Tensor state, int action, int step, List<Tensor> tracker) {
+  //   final actionEmb = model.wte.getRow(action);
+  //   final posEmb = model.wpe.getRow(step % model.blockSize);
+
+  //   final combined = state + actionEmb + posEmb;
+  //   final nextState = model.blocks[0].forward(combined, dummyEnc, tracker);
+
+  //   // Ensure intermediate results are tracked so they aren't cleaned up too early
+  //   tracker.addAll([actionEmb, posEmb, combined]);
+  //   tracker.add(nextState);
+
+  //   return nextState;
+  // }
 
   // --- f(s): PREDICTION ---
   Tensor predictPolicy(Tensor state, List<Tensor> tracker) {
