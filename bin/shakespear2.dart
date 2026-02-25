@@ -57,7 +57,7 @@ void main() async {
   const int numHeads = 12;
 
   final gpt = TransformerDecoder(
-    vocabSize: tokenizer.vocabSize,
+    vocabSize: vocabSize,
     embedSize: embedSize,
     encoderEmbedSize: embedSize,
     numLayers: numLayers,
