@@ -126,157 +126,50 @@ __global__ void layer_norm_bwd(float *a, float *go, float *ga, int R, int C, flo
     }
 }
 
+// --- Global Kernels (Must be outside functions) ---
 __global__ void add_fwd(float *a, float *b, float *out, int n)
 {
-    int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    if (i + 3 < n)
-    {
-        float4 va = reinterpret_cast<float4 *>(a)[i / 4];
-        float4 vb = reinterpret_cast<float4 *>(b)[i / 4];
-        float4 vout;
-        vout.x = va.x + vb.x;
-        vout.y = va.y + vb.y;
-        vout.z = va.z + vb.z;
-        vout.w = va.w + vb.w;
-        reinterpret_cast<float4 *>(out)[i / 4] = vout;
-    }
-    else
-    {
-        // Handle remainder
-        for (int j = i; j < n; j++)
-        {
-            out[j] = a[j] + b[j];
-        }
-    }
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+        out[i] = a[i] + b[i];
 }
-
 __global__ void add_bwd(float *go, float *ga, float *gb, int n)
 {
-    int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    if (i + 3 < n)
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
     {
-        float4 vgo = reinterpret_cast<float4 *>(go)[i / 4];
-
-        // Addition gradient is just passing the output gradient back.
-        // Direct addition is safe here because each index is unique to this thread.
-        ga[i + 0] += vgo.x;
-        ga[i + 1] += vgo.y;
-        ga[i + 2] += vgo.z;
-        ga[i + 3] += vgo.w;
-
-        gb[i + 0] += vgo.x;
-        gb[i + 1] += vgo.y;
-        gb[i + 2] += vgo.z;
-        gb[i + 3] += vgo.w;
-    }
-    else
-    {
-        for (int j = i; j < n; j++)
-        {
-            ga[j] += go[j];
-            gb[j] += go[j];
-        }
+        atomicAdd(&ga[i], go[i]);
+        atomicAdd(&gb[i], go[i]);
     }
 }
-__global__ void sub_fwd(float *a, float *b, float *out, int n) {
-    // Each thread handles 4 elements
-    int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    
-    if (i + 3 < n) {
-        float4 va = reinterpret_cast<float4*>(a + i)[0];
-        float4 vb = reinterpret_cast<float4*>(b + i)[0];
-        float4 res;
-        res.x = va.x - vb.x;
-        res.y = va.y - vb.y;
-        res.z = va.z - vb.z;
-        res.w = va.w - vb.w;
-        reinterpret_cast<float4*>(out + i)[0] = res;
-    } else {
-        // Handle remainder elements
-        for (int j = i; j < n; j++) {
-            out[j] = a[j] - b[j];
-        }
-    }
+__global__ void sub_fwd(float *a, float *b, float *out, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+        out[i] = a[i] - b[i];
 }
-
-__global__ void sub_bwd(float *go, float *ga, float *gb, int n) {
-    int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    
-    if (i + 3 < n) {
-        float4 vgo = reinterpret_cast<float4*>(go + i)[0];
-        
-        // Note: We use atomicAdd because a tensor might be used 
-        // in multiple operations (aliasing), requiring gradient accumulation.
-        atomicAdd(&ga[i+0], vgo.x);
-        atomicAdd(&ga[i+1], vgo.y);
-        atomicAdd(&ga[i+2], vgo.z);
-        atomicAdd(&ga[i+3], vgo.w);
-        
-        atomicAdd(&gb[i+0], -vgo.x);
-        atomicAdd(&gb[i+1], -vgo.y);
-        atomicAdd(&gb[i+2], -vgo.z);
-        atomicAdd(&gb[i+3], -vgo.w);
-    } else {
-        for (int j = i; j < n; j++) {
-            atomicAdd(&ga[j], go[j]);
-            atomicAdd(&gb[j], -go[j]);
-        }
+__global__ void sub_bwd(float *go, float *ga, float *gb, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+    {
+        atomicAdd(&ga[i], go[i]);
+        atomicAdd(&gb[i], -go[i]);
     }
 }
 __global__ void mul_fwd(float *a, float *b, float *out, int n)
 {
-    int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    if (i + 3 < n)
-    {
-        // Vectorized load and store
-        float4 va = reinterpret_cast<float4 *>(a)[i / 4];
-        float4 vb = reinterpret_cast<float4 *>(b)[i / 4];
-        float4 vout;
-        vout.x = va.x * vb.x;
-        vout.y = va.y * vb.y;
-        vout.z = va.z * vb.z;
-        vout.w = va.w * vb.w;
-        reinterpret_cast<float4 *>(out)[i / 4] = vout;
-    }
-    else
-    {
-        // Handle remainder for non-multiple of 4
-        for (int j = i; j < n; j++)
-        {
-            out[j] = a[j] * b[j];
-        }
-    }
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
+        out[i] = a[i] * b[i];
 }
-
 __global__ void mul_bwd(float *da, float *db, float *go, float *ga, float *gb, int n)
 {
-    int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    if (i + 3 < n)
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n)
     {
-        float4 vda = reinterpret_cast<float4 *>(da)[i / 4];
-        float4 vdb = reinterpret_cast<float4 *>(db)[i / 4];
-        float4 vgo = reinterpret_cast<float4 *>(go)[i / 4];
-
-        // No atomicAdd needed if gradients are unique to this thread!
-        // We use direct addition assuming ga/gb aren't shared across indices.
-        // If these are element-wise, ga[i] is only touched by thread i.
-        ga[i + 0] += vdb.x * vgo.x;
-        ga[i + 1] += vdb.y * vgo.y;
-        ga[i + 2] += vdb.z * vgo.z;
-        ga[i + 3] += vdb.w * vgo.w;
-
-        gb[i + 0] += vda.x * vgo.x;
-        gb[i + 1] += vda.y * vgo.y;
-        gb[i + 2] += vda.z * vgo.z;
-        gb[i + 3] += vda.w * vgo.w;
-    }
-    else
-    {
-        for (int j = i; j < n; j++)
-        {
-            ga[j] += db[j] * go[j];
-            gb[j] += da[j] * go[j];
-        }
+        atomicAdd(&ga[i], db[i] * go[i]);
+        atomicAdd(&gb[i], da[i] * go[i]);
     }
 }
 __global__ void div_fwd(float *a, float *b, float *out, int n)
@@ -384,136 +277,32 @@ __global__ void step_kernel(float *data, float *grad, float lr, int n)
         grad[i] = 0;
     }
 }
-// __global__ void matmul_fwd(float *A, float *B, float *C, int M, int K, int N)
-// {
-//     int row = blockIdx.y * blockDim.y + threadIdx.y;
-//     int col = blockIdx.x * blockDim.x + threadIdx.x;
-//     if (row < M && col < N)
-//     {
-//         float sum = 0;
-//         for (int i = 0; i < K; i++)
-//             sum += A[row * K + i] * B[i * N + col];
-//         C[row * N + col] = sum;
-//     }
-// }
 __global__ void matmul_fwd(float *A, float *B, float *C, int M, int K, int N)
 {
-    __shared__ float sA[32][32];
-    __shared__ float sB[32][32];
-
-    int row = blockIdx.y * 32 + threadIdx.y;
-    int col = blockIdx.x * 32 + threadIdx.x;
-    float sum = 0.0f;
-
-    for (int tile = 0; tile < (K + 31) / 32; ++tile)
-    {
-        // Load tiles into shared memory
-        if (row < M && (tile * 32 + threadIdx.x) < K)
-            sA[threadIdx.y][threadIdx.x] = A[row * K + tile * 32 + threadIdx.x];
-        else
-            sA[threadIdx.y][threadIdx.x] = 0.0f;
-
-        if (col < N && (tile * 32 + threadIdx.y) < K)
-            sB[threadIdx.y][threadIdx.x] = B[(tile * 32 + threadIdx.y) * N + col];
-        else
-            sB[threadIdx.y][threadIdx.x] = 0.0f;
-
-        __syncthreads();
-
-        // Compute partial dot product
-        for (int i = 0; i < 32; ++i)
-        {
-            sum += sA[threadIdx.y][i] * sB[i][threadIdx.x];
-        }
-        __syncthreads();
-    }
-
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < M && col < N)
     {
+        float sum = 0;
+        for (int i = 0; i < K; i++)
+            sum += A[row * K + i] * B[i * N + col];
         C[row * N + col] = sum;
     }
 }
-// dA = dO * B^T
-__global__ void matmul_bwd_dA_tiled(float *dO, float *B, float *dA, int M, int K, int N)
+__global__ void matmul_bwd(float *A, float *B, float *dO, float *dA, float *dB, int M, int K, int N)
 {
-    __shared__ float sdO[32][32];
-    __shared__ float sB[32][32];
-
-    int row = blockIdx.y * 32 + threadIdx.y;
-    int col = blockIdx.x * 32 + threadIdx.x;
-    float sum = 0.0f;
-
-    for (int tile = 0; tile < (N + 31) / 32; ++tile)
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < M && col < N)
     {
-        // Load dO tile
-        if (row < M && (tile * 32 + threadIdx.x) < N)
-            sdO[threadIdx.y][threadIdx.x] = dO[row * N + tile * 32 + threadIdx.x];
-        else
-            sdO[threadIdx.y][threadIdx.x] = 0.0f;
-
-        // Load B tile (Transposed access for B^T logic)
-        // B is (K x N), we want B^T which is (N x K)
-        if (col < K && (tile * 32 + threadIdx.y) < N)
-            sB[threadIdx.y][threadIdx.x] = B[col * N + tile * 32 + threadIdx.y];
-        else
-            sB[threadIdx.y][threadIdx.x] = 0.0f;
-
-        __syncthreads();
-        for (int i = 0; i < 32; ++i)
-            sum += sdO[threadIdx.y][i] * sB[i][threadIdx.x];
-        __syncthreads();
+        float g = dO[row * N + col];
+        for (int i = 0; i < K; i++)
+        {
+            atomicAdd(&dA[row * K + i], B[i * N + col] * g);
+            atomicAdd(&dB[i * N + col], A[row * K + i] * g);
+        }
     }
-
-    if (row < M && col < K)
-        dA[row * K + col] += sum;
 }
-
-// dB = A^T * dO
-__global__ void matmul_bwd_dB_tiled(float *A, float *dO, float *dB, int M, int K, int N)
-{
-    __shared__ float sA[32][32];
-    __shared__ float sdO[32][32];
-
-    int row = blockIdx.y * 32 + threadIdx.y; // K dimension
-    int col = blockIdx.x * 32 + threadIdx.x; // N dimension
-    float sum = 0.0f;
-
-    for (int tile = 0; tile < (M + 31) / 32; ++tile)
-    {
-        // Load A tile (Transposed access for A^T logic)
-        if (row < K && (tile * 32 + threadIdx.x) < M)
-            sA[threadIdx.y][threadIdx.x] = A[(tile * 32 + threadIdx.x) * K + row];
-        else
-            sA[threadIdx.y][threadIdx.x] = 0.0f;
-
-        // Load dO tile
-        if (col < N && (tile * 32 + threadIdx.y) < M)
-            sdO[threadIdx.y][threadIdx.x] = dO[(tile * 32 + threadIdx.y) * N + col];
-        else
-            sdO[threadIdx.y][threadIdx.x] = 0.0f;
-
-        __syncthreads();
-        for (int i = 0; i < 32; ++i)
-            sum += sA[threadIdx.y][i] * sdO[i][threadIdx.x];
-        __syncthreads();
-    }
-
-    if (row < K && col < N)
-        dB[row * N + col] += sum;
-}
-
-// We keep the signature to avoid breaking callers, but we use cuBLAS inside
-// Note: Usually, you'd pass a handle, but here we assume a global cublas_handle
-// void matmul_fwd_fast(float *A, float *B, float *C, int M, int K, int N) {
-//     const float alpha = 1.0f;
-//     const float beta = 0.0f;
-//     // Row-major C = A * B  =>  Column-major C^T = B^T * A^T
-//     // A is M x K, B is K x N, C is M x N
-//     cublasSgemm(cublas_handle,
-//                 CUBLAS_OP_N, CUBLAS_OP_N,
-//                 N, M, K,
-//                 &alpha, B, N, A, K, &beta, C, N);
-// }
 
 __global__ void log_fwd(float *a, float *out, int n)
 {
@@ -1091,18 +880,16 @@ __global__ void xavier_init_kernel(float *data, int size, int n_in, int n_out, u
     }
 }
 
-__global__ void im2col_kernel(const float *data_im, const int channels,
-                              const int height, const int width, const int kernel_h, const int kernel_w,
-                              const int pad_h, const int pad_w, const int stride_h, const int stride_w,
-                              const int height_col, const int width_col, float *data_col)
-{
-
+__global__ void im2col_kernel(const float* data_im, const int channels,
+    const int height, const int width, const int kernel_h, const int kernel_w,
+    const int pad_h, const int pad_w, const int stride_h, const int stride_w,
+    const int height_col, const int width_col, float* data_col) {
+    
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int num_outputs = height_col * width_col;
     int total_threads = channels * num_outputs;
 
-    if (index < total_threads)
-    {
+    if (index < total_threads) {
         // Map thread to a specific output spatial location
         int w_out = index % width_col;
         int h_out = (index / width_col) % height_col;
@@ -1114,28 +901,23 @@ __global__ void im2col_kernel(const float *data_im, const int channels,
         // The column in the ColBuffer [PatchSize x NumOutputs]
         int col = h_out * width_col + w_out;
 
-        for (int i = 0; i < kernel_h; ++i)
-        {
-            for (int j = 0; j < kernel_w; ++j)
-            {
+        for (int i = 0; i < kernel_h; ++i) {
+            for (int j = 0; j < kernel_w; ++j) {
                 // 'row' is which element of the 9-element patch we are filling
                 int row = (c_im * kernel_h * kernel_w) + (i * kernel_w + j);
-
+                
                 // target_idx must match the MatMul inner-loop K
-                // MatMul(A, B) where B is colBuffer.
-                // B is accessed as B[i * N + col].
+                // MatMul(A, B) where B is colBuffer. 
+                // B is accessed as B[i * N + col]. 
                 // Here 'i' is 'row' and 'N' is 'num_outputs'.
                 int target_idx = row * num_outputs + col;
 
                 int r = h_in_start + i;
                 int c = w_in_start + j;
 
-                if (r >= 0 && r < height && c >= 0 && c < width)
-                {
+                if (r >= 0 && r < height && c >= 0 && c < width) {
                     data_col[target_idx] = data_im[(c_im * height + r) * width + c];
-                }
-                else
-                {
+                } else {
                     data_col[target_idx] = 0.0f;
                 }
             }
@@ -1274,36 +1056,19 @@ extern "C"
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
         Tensor *out = new Tensor(a->rows, a->cols);
         out->_children = {a, b};
-
-        int n = a->size;
-        // Each thread handles 4 elements, so we divide the total threads needed by 4
-        int blocks = (n + (256 * 4) - 1) / (256 * 4);
-
-        add_fwd<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, n);
-
-        out->_backward = [out, a, b, n, blocks]()
-        {
-            // Removed atomicAdd here as well for massive speedup
-            add_bwd<<<blocks, 256>>>(out->grad_gpu, a->grad_gpu, b->grad_gpu, n);
-        };
-
+        add_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, a->size);
+        out->_backward = [out, a, b]()
+        { add_bwd<<<(a->size + 255) / 256, 256>>>(out->grad_gpu, a->grad_gpu, b->grad_gpu, a->size); };
         return (void *)out;
     }
-    DLLEXPORT void *sub_tensors(void *ah, void *bh) {
+    DLLEXPORT void *sub_tensors(void *ah, void *bh)
+    {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
         Tensor *out = new Tensor(a->rows, a->cols);
         out->_children = {a, b};
-    
-        // We process 4 elements per thread
-        int block_size = 256;
-        int grid_size = (a->size + (block_size * 4) - 1) / (block_size * 4);
-    
-        sub_fwd<<<grid_size, block_size>>>(a->data_gpu, b->data_gpu, out->data_gpu, a->size);
-    
-        out->_backward = [out, a, b, grid_size, block_size]() {
-            sub_bwd<<<grid_size, block_size>>>(out->grad_gpu, a->grad_gpu, b->grad_gpu, a->size);
-        };
-    
+        sub_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, a->size);
+        out->_backward = [out, a, b]()
+        { sub_bwd<<<(a->size + 255) / 256, 256>>>(out->grad_gpu, a->grad_gpu, b->grad_gpu, a->size); };
         return (void *)out;
     }
     DLLEXPORT void *mul_tensors(void *ah, void *bh)
@@ -1311,21 +1076,9 @@ extern "C"
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
         Tensor *out = new Tensor(a->rows, a->cols);
         out->_children = {a, b};
-
-        // Divide size by 4 because each thread handles 4 floats
-        int n = a->size;
-        int blocks = (n + (256 * 4) - 1) / (256 * 4);
-
-        mul_fwd<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, n);
-
-        out->_backward = [out, a, b, n, blocks]()
-        {
-            // High performer backward: Vectorized and NO atomicAdds
-            // because element-wise grads don't overlap.
-            mul_bwd<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->grad_gpu,
-                                     a->grad_gpu, b->grad_gpu, n);
-        };
-
+        mul_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, a->size);
+        out->_backward = [out, a, b]()
+        { mul_bwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, b->data_gpu, out->grad_gpu, a->grad_gpu, b->grad_gpu, a->size); };
         return (void *)out;
     }
     DLLEXPORT void *div_tensors(void *ah, void *bh)
@@ -1400,26 +1153,11 @@ extern "C"
         int M = a->rows, K = a->cols, N = b->cols;
         Tensor *out = new Tensor(M, N);
         out->_children = {a, b};
-
-        // Forward: Tiled 32x32
-        dim3 th(32, 32);
-        dim3 bl((N + 31) / 32, (M + 31) / 32);
+        dim3 th(16, 16);
+        dim3 bl((N + 15) / 16, (M + 15) / 16);
         matmul_fwd<<<bl, th>>>(a->data_gpu, b->data_gpu, out->data_gpu, M, K, N);
-
-        // Backward Lambda: Pure CUDA High Performer
         out->_backward = [out, a, b, M, K, N]()
-        {
-            dim3 th32(32, 32);
-
-            // Launch dA calculation
-            dim3 blA((K + 31) / 32, (M + 31) / 32);
-            matmul_bwd_dA_tiled<<<blA, th32>>>(out->grad_gpu, b->data_gpu, a->grad_gpu, M, K, N);
-
-            // Launch dB calculation
-            dim3 blB((N + 31) / 32, (K + 31) / 32);
-            matmul_bwd_dB_tiled<<<blB, th32>>>(a->data_gpu, out->grad_gpu, b->grad_gpu, M, K, N);
-        };
-
+        { matmul_bwd<<<dim3((N + 15) / 16, (M + 15) / 16), dim3(16, 16)>>>(a->data_gpu, b->data_gpu, out->grad_gpu, a->grad_gpu, b->grad_gpu, M, K, N); };
         return (void *)out;
     }
 

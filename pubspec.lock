@@ -97,6 +97,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.6"
+  dartcv4:
+    dependency: "direct main"
+    description:
+      name: dartcv4
+      sha256: "0e2e3473cbbbcca47a7da4153ee11a93faec19598809d4564a8fb35910b7fbce"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.8"
   ffi:
     dependency: "direct main"
     description:

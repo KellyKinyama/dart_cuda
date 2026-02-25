@@ -69,7 +69,7 @@ void main() async {
   final optimizer = Adam(gpt.parameters(), lr: 0.0005);
   final dummyEnc = Tensor.zeros([1, embedSize]);
 
-  await loadModuleBinary(gpt, 'shakespeare_gpt.bin');
+  await loadModuleBinary(gpt, 'shakespeare_gpt_2.bin');
 
   print("🎭 Training on Shakespeare: Layers: $numLayers, Embed: $embedSize");
 
@@ -98,7 +98,7 @@ void main() async {
       print("Step $step | Loss: ${lossVal.toStringAsFixed(4)}");
 
       // Save checkpoint
-      await saveModuleBinary(gpt, 'shakespeare_gpt.bin');
+      await saveModuleBinary(gpt, 'shakespeare_gpt_2.bin');
 
       if (lossVal.isNaN) {
         print("💥 Loss exploded. Check weight initialization or reduce LR.");
