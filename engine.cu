@@ -5,8 +5,12 @@
 #include <functional>
 #include <cmath>
 #include <curand_kernel.h>
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
 
 #define DLLEXPORT __attribute__((visibility("default")))
+
+namespace cg = cooperative_groups;
 
 // __global__ void l2_normalize_fwd(float *a, float *out, int R, int C, float eps)
 // {
@@ -178,46 +182,56 @@ __global__ void add_bwd(float *go, float *ga, float *gb, int n)
         }
     }
 }
-__global__ void sub_fwd(float *a, float *b, float *out, int n) {
+__global__ void sub_fwd(float *a, float *b, float *out, int n)
+{
     // Each thread handles 4 elements
     int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    
-    if (i + 3 < n) {
-        float4 va = reinterpret_cast<float4*>(a + i)[0];
-        float4 vb = reinterpret_cast<float4*>(b + i)[0];
+
+    if (i + 3 < n)
+    {
+        float4 va = reinterpret_cast<float4 *>(a + i)[0];
+        float4 vb = reinterpret_cast<float4 *>(b + i)[0];
         float4 res;
         res.x = va.x - vb.x;
         res.y = va.y - vb.y;
         res.z = va.z - vb.z;
         res.w = va.w - vb.w;
-        reinterpret_cast<float4*>(out + i)[0] = res;
-    } else {
+        reinterpret_cast<float4 *>(out + i)[0] = res;
+    }
+    else
+    {
         // Handle remainder elements
-        for (int j = i; j < n; j++) {
+        for (int j = i; j < n; j++)
+        {
             out[j] = a[j] - b[j];
         }
     }
 }
 
-__global__ void sub_bwd(float *go, float *ga, float *gb, int n) {
+__global__ void sub_bwd(float *go, float *ga, float *gb, int n)
+{
     int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    
-    if (i + 3 < n) {
-        float4 vgo = reinterpret_cast<float4*>(go + i)[0];
-        
-        // Note: We use atomicAdd because a tensor might be used 
+
+    if (i + 3 < n)
+    {
+        float4 vgo = reinterpret_cast<float4 *>(go + i)[0];
+
+        // Note: We use atomicAdd because a tensor might be used
         // in multiple operations (aliasing), requiring gradient accumulation.
-        atomicAdd(&ga[i+0], vgo.x);
-        atomicAdd(&ga[i+1], vgo.y);
-        atomicAdd(&ga[i+2], vgo.z);
-        atomicAdd(&ga[i+3], vgo.w);
-        
-        atomicAdd(&gb[i+0], -vgo.x);
-        atomicAdd(&gb[i+1], -vgo.y);
-        atomicAdd(&gb[i+2], -vgo.z);
-        atomicAdd(&gb[i+3], -vgo.w);
-    } else {
-        for (int j = i; j < n; j++) {
+        atomicAdd(&ga[i + 0], vgo.x);
+        atomicAdd(&ga[i + 1], vgo.y);
+        atomicAdd(&ga[i + 2], vgo.z);
+        atomicAdd(&ga[i + 3], vgo.w);
+
+        atomicAdd(&gb[i + 0], -vgo.x);
+        atomicAdd(&gb[i + 1], -vgo.y);
+        atomicAdd(&gb[i + 2], -vgo.z);
+        atomicAdd(&gb[i + 3], -vgo.w);
+    }
+    else
+    {
+        for (int j = i; j < n; j++)
+        {
             atomicAdd(&ga[j], go[j]);
             atomicAdd(&gb[j], -go[j]);
         }
@@ -796,80 +810,255 @@ __global__ void embedding_bwd(int *indices, float *go, float *gwte, float *gwpe,
     }
 }
 
-// Forward Kernel: Computes Log-Sum-Exp and blended Cross Entropy loss
-__global__ void cross_entropy_fwd(float *logits, int *targets, float *loss, int T, int V, float epsilon)
+// Fused kernel: Computes Softmax + Cross Entropy + Label Smoothing in one pass
+// Each warp (32 threads) handles one row (one T)
+__global__ void cross_entropy_fwd_fast(float *logits, int *targets, float *loss, int T, int V, float epsilon)
 {
-    int t = blockIdx.x * blockDim.x + threadIdx.x;
-    if (t < T)
+    int t = blockIdx.x; // One block per row for simplicity, or use warps
+    if (t >= T)
+        return;
+
+    float *row = logits + t * V;
+
+    // 1. Find Max (Warp-wide reduction)
+    float thread_max = -1e30f;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
     {
-        // 1. Find max for numerical stability (prevents exp() overflow)
-        float max_val = -1e30f;
-        for (int v = 0; v < V; v++)
-        {
-            if (logits[t * V + v] > max_val)
-                max_val = logits[t * V + v];
-        }
+        thread_max = fmaxf(thread_max, row[v]);
+    }
 
-        // 2. Compute Log-Sum-Exp
-        float sum_exp = 0.0f;
-        float sum_logits = 0.0f;
-        for (int v = 0; v < V; v++)
-        {
-            float val = logits[t * V + v];
-            sum_exp += expf(val - max_val);
-            sum_logits += val;
-        }
-        float lse = max_val + logf(sum_exp + 1e-12f);
+    // Warp-level reduction
+    for (int offset = 16; offset > 0; offset /= 2)
+        thread_max = fmaxf(thread_max, __shfl_down_sync(0xFFFFFFFF, thread_max, offset));
 
-        // 3. Blended Loss (Label Smoothing)
-        int target_idx = targets[t];
-        float logit_target = logits[t * V + target_idx];
+    // Broadcast max to all threads in block
+    __shared__ float shared_max;
+    if (threadIdx.x == 0)
+        shared_max = thread_max;
+    __syncthreads();
+    float max_val = shared_max;
+
+    // 2. Compute Sum of Exp and Sum of Logits
+    float thread_sum_exp = 0.0f;
+    float thread_sum_logits = 0.0f;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
+    {
+        float val = row[v];
+        thread_sum_exp += expf(val - max_val);
+        thread_sum_logits += val;
+    }
+
+    // Block-wide reduction for sums
+    for (int offset = 16; offset > 0; offset /= 2)
+    {
+        thread_sum_exp += __shfl_down_sync(0xFFFFFFFF, thread_sum_exp, offset);
+        thread_sum_logits += __shfl_down_sync(0xFFFFFFFF, thread_sum_logits, offset);
+    }
+
+    __shared__ float shared_sum_exp, shared_sum_logits;
+    if (threadIdx.x == 0)
+    {
+        shared_sum_exp = thread_sum_exp;
+        shared_sum_logits = thread_sum_logits;
+    }
+    __syncthreads();
+
+    // 3. Final calculation (Thread 0 only)
+    if (threadIdx.x == 0)
+    {
+        float lse = max_val + logf(shared_sum_exp + 1e-12f);
+        float logit_target = row[targets[t]];
 
         float ce_loss = lse - logit_target;
-        float smooth_loss = lse - (sum_logits / V);
-
-        // epsilon should be small (e.g., 0.1).
-        // Loss = (1-eps)*CE + eps*Smooth
+        float smooth_loss = lse - (shared_sum_logits / V);
         loss[t] = (1.0f - epsilon) * ce_loss + epsilon * smooth_loss;
     }
 }
 
-// Backward Kernel: Computes (Softmax - Target) / T
-__global__ void cross_entropy_bwd(float *logits, int *targets, float *grad_logits, int T, int V, float grad_output, float epsilon)
+// Optimized Backward: Computes (Softmax - Target) / T efficiently
+__global__ void cross_entropy_bwd_fast(float *logits, int *targets, float *grad_logits, int T, int V, float grad_output, float epsilon)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < T * V)
+    int t = blockIdx.x;
+    if (t >= T)
+        return;
+
+    float *row_logits = logits + t * V;
+    float *row_grads = grad_logits + t * V;
+    int target_idx = targets[t];
+
+    // Recompute LSE for softmax (standard practice to avoid storing large activation maps)
+    float thread_max = -1e30f;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
+        thread_max = fmaxf(thread_max, row_logits[v]);
+    for (int offset = 16; offset > 0; offset /= 2)
+        thread_max = fmaxf(thread_max, __shfl_down_sync(0xFFFFFFFF, thread_max, offset));
+    __shared__ float max_val;
+    if (threadIdx.x == 0)
+        max_val = thread_max;
+    __syncthreads();
+
+    float thread_sum_exp = 0.0f;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
+        thread_sum_exp += expf(row_logits[v] - max_val);
+    for (int offset = 16; offset > 0; offset /= 2)
+        thread_sum_exp += __shfl_down_sync(0xFFFFFFFF, thread_sum_exp, offset);
+    __shared__ float sum_exp;
+    if (threadIdx.x == 0)
+        sum_exp = thread_sum_exp;
+    __syncthreads();
+
+    // Compute gradients for the row
+    float norm = 1.0f / (sum_exp + 1e-12f);
+    float scale = grad_output / (float)T;
+    float eps_v = epsilon / (float)V;
+
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
     {
-        int t = idx / V;
-        int v = idx % V;
-        int target_idx = targets[t];
+        float softmax = expf(row_logits[v] - max_val) * norm;
+        float indicator = (v == target_idx) ? 1.0f : 0.0f;
+        float target_prob = (1.0f - epsilon) * indicator + eps_v;
 
-        // 1. Recompute Softmax for this row
-        float max_val = -1e30f;
-        for (int i = 0; i < V; i++)
-        {
-            if (logits[t * V + i] > max_val)
-                max_val = logits[t * V + i];
-        }
+        row_grads[v] = (softmax - target_prob) * scale;
+    }
+}
 
-        float sum_exp = 0.0f;
-        for (int i = 0; i < V; i++)
-        {
-            sum_exp += expf(logits[t * V + i] - max_val);
-        }
+// Helper for block-level reduction
+__device__ float blockReduceMax(float val)
+{
+    static __shared__ float shared[32];
+    int lane = threadIdx.x % 32;
+    int wid = threadIdx.x / 32;
 
-        float softmax = expf(logits[idx] - max_val) / (sum_exp + 1e-12f);
+    // Warp reduction
+    for (int offset = 16; offset > 0; offset /= 2)
+        val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
 
-        // 2. Smoothed Target Probability
-        // For a correct move, target_prob is approx (1 - epsilon)
-        // For a wrong move, target_prob is approx (epsilon / V)
+    if (lane == 0)
+        shared[wid] = val;
+    __syncthreads();
+
+    // Final warp reduction
+    val = (threadIdx.x < blockDim.x / 32.0f) ? shared[lane] : -1e30f;
+    if (wid == 0)
+    {
+        for (int offset = 16; offset > 0; offset /= 2)
+            val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
+    }
+    return val;
+}
+
+__device__ float blockReduceSum(float val)
+{
+    static __shared__ float shared[32];
+    int lane = threadIdx.x % 32;
+    int wid = threadIdx.x / 32;
+
+    for (int offset = 16; offset > 0; offset /= 2)
+        val += __shfl_down_sync(0xffffffff, val, offset);
+
+    if (lane == 0)
+        shared[wid] = val;
+    __syncthreads();
+
+    val = (threadIdx.x < blockDim.x / 32.0f) ? shared[lane] : 0.0f;
+    if (wid == 0)
+    {
+        for (int offset = 16; offset > 0; offset /= 2)
+            val += __shfl_down_sync(0xffffffff, val, offset);
+    }
+    return val;
+}
+
+__global__ void cross_entropy_fwd_hyper(float *logits, int *targets, float *loss, int T, int V, float epsilon)
+{
+    int t = blockIdx.x;
+    if (t >= T)
+        return;
+
+    float *row = logits + t * V;
+
+    // 1. Max for stability
+    float local_max = -1e30f;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
+    {
+        local_max = fmaxf(local_max, row[v]);
+    }
+    float max_val = blockReduceMax(local_max);
+    __shared__ float b_max;
+    if (threadIdx.x == 0)
+        b_max = max_val;
+    __syncthreads();
+
+    // 2. Sums
+    float local_sum_exp = 0.0f;
+    float local_sum_logits = 0.0f;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
+    {
+        float p = expf(row[v] - b_max);
+        local_sum_exp += p;
+        local_sum_logits += row[v];
+    }
+
+    float total_sum_exp = blockReduceSum(local_sum_exp);
+    float total_sum_logits = blockReduceSum(local_sum_logits);
+
+    if (threadIdx.x == 0)
+    {
+        float lse = b_max + logf(total_sum_exp + 1e-12f);
+        float logit_target = row[targets[t]];
+
+        float ce_loss = lse - logit_target;
+        float smooth_loss = lse - (total_sum_logits / V);
+        loss[t] = (1.0f - epsilon) * ce_loss + epsilon * smooth_loss;
+    }
+}
+
+__global__ void cross_entropy_bwd_hyper(float *logits, int *targets, float *grad_logits, int T, int V, float grad_output, float epsilon)
+{
+    int t = blockIdx.x;
+    if (t >= T)
+        return;
+
+    float *row_logits = logits + t * V;
+    float *row_grads = grad_logits + t * V;
+    int target_idx = targets[t];
+
+    // Re-calculate max and sum_exp for softmax
+    float local_max = -1e30f;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
+        local_max = fmaxf(local_max, row_logits[v]);
+    float max_val = blockReduceMax(local_max);
+    __shared__ float b_max;
+    if (threadIdx.x == 0)
+        b_max = max_val;
+    __syncthreads();
+
+    float local_sum_exp = 0.0f;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
+        local_sum_exp += expf(row_logits[v] - b_max);
+    float total_sum_exp = blockReduceSum(local_sum_exp);
+    __shared__ float b_sum_exp;
+    if (threadIdx.x == 0)
+        b_sum_exp = total_sum_exp + 1e-12f;
+    __syncthreads();
+
+    float scale = grad_output / (float)T;
+    for (int v = threadIdx.x; v < V; v += blockDim.x)
+    {
+        float softmax = expf(row_logits[v] - b_max) / b_sum_exp;
         float indicator = (v == target_idx) ? 1.0f : 0.0f;
         float target_prob = (1.0f - epsilon) * indicator + (epsilon / (float)V);
-
-        // 3. Final Gradient calculation
-        // We MUST divide by T because the forward loss was averaged (total_loss / T)
-        grad_logits[idx] = ((softmax - target_prob) * grad_output) / (float)T;
+        row_grads[v] = (softmax - target_prob) * scale;
     }
+}
+
+// Simple Mean Kernel to avoid Host-Device roundtrip
+__global__ void mean_kernel(float *loss, float *out, int T)
+{
+    float sum = 0;
+    for (int i = 0; i < T; i++)
+        sum += loss[i];
+    *out = sum / T;
 }
 
 __global__ void adam_kernel(float *p, float *g, float *m, float *v,
@@ -1289,21 +1478,23 @@ extern "C"
 
         return (void *)out;
     }
-    DLLEXPORT void *sub_tensors(void *ah, void *bh) {
+    DLLEXPORT void *sub_tensors(void *ah, void *bh)
+    {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
         Tensor *out = new Tensor(a->rows, a->cols);
         out->_children = {a, b};
-    
+
         // We process 4 elements per thread
         int block_size = 256;
         int grid_size = (a->size + (block_size * 4) - 1) / (block_size * 4);
-    
+
         sub_fwd<<<grid_size, block_size>>>(a->data_gpu, b->data_gpu, out->data_gpu, a->size);
-    
-        out->_backward = [out, a, b, grid_size, block_size]() {
+
+        out->_backward = [out, a, b, grid_size, block_size]()
+        {
             sub_bwd<<<grid_size, block_size>>>(out->grad_gpu, a->grad_gpu, b->grad_gpu, a->size);
         };
-    
+
         return (void *)out;
     }
     DLLEXPORT void *mul_tensors(void *ah, void *bh)
@@ -1640,30 +1831,27 @@ extern "C"
         float *d_losses;
         cudaMalloc(&d_losses, T * sizeof(float));
 
-        cross_entropy_fwd<<<(T + 255) / 256, 256>>>(
-            logits->data_gpu, d_targets, d_losses, T, V, GLOBAL_EPSILON);
+        // Launch with 1 block per row, 128 threads per block
+        cross_entropy_fwd_hyper<<<T, 128>>>(logits->data_gpu, d_targets, d_losses, T, V, GLOBAL_EPSILON);
 
-        // Average the loss for the scalar output
+        // Use a basic reduction to get mean (or copy back if T is small)
         std::vector<float> h_losses(T);
         cudaMemcpy(h_losses.data(), d_losses, T * sizeof(float), cudaMemcpyDeviceToHost);
-
         float total_loss = 0;
         for (float l : h_losses)
             total_loss += l;
         float mean_loss = total_loss / T;
-
         cudaMemcpy(out->data_gpu, &mean_loss, sizeof(float), cudaMemcpyHostToDevice);
 
-        // Backward Lambda
         out->_backward = [out, logits, d_targets, T, V]()
         {
             float h_grad_out;
             cudaMemcpy(&h_grad_out, out->grad_gpu, sizeof(float), cudaMemcpyDeviceToHost);
 
-            cross_entropy_bwd<<<(T * V + 255) / 256, 256>>>(
+            cross_entropy_bwd_hyper<<<T, 128>>>(
                 logits->data_gpu, d_targets, logits->grad_gpu, T, V, h_grad_out, GLOBAL_EPSILON);
 
-            cudaFree(d_targets); // Cleanup inside lambda
+            cudaFree(d_targets);
         };
 
         cudaFree(d_losses);
