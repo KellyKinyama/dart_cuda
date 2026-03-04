@@ -23,7 +23,7 @@ void main() {
   final Map<int, String> itos = stoi.map((k, v) => MapEntry(v, k));
 
   final model = TransformerDecoder(
-    vocabSize: 12,
+    vocabSize: 32,
     embedSize: 64,
     encoderEmbedSize: 64,
     blockSize: 16,

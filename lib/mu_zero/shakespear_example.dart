@@ -44,10 +44,10 @@ void main() async {
   final tokenizer = CharTokenizer(rawText);
   final data = tokenizer.encode(rawText);
 
-  const int blockSize = 32; // Reduced for VRAM
-  const int embedSize = 96; // Reduced for VRAM
-  const int numLayers = 4;
-  const int numHeads = 6;
+  const int blockSize = 64; // Reduced for VRAM
+  const int embedSize = 64; // Reduced for VRAM
+  const int numLayers = 2;
+  const int numHeads = 4;
 
   final gpt = TransformerDecoder(
     vocabSize: tokenizer.vocabSize,
@@ -63,7 +63,7 @@ void main() async {
 
   print("🎭 Training MuZero-Shakespeare...");
 
-  for (int epoch = 0; epoch < 1000; epoch++) {
+  for (int epoch = 0; epoch < 200; epoch++) {
     optimizer.zeroGrad();
     List<Tensor> tracker = [];
     double totalLoss = 0;
@@ -103,7 +103,7 @@ void main() async {
     // _safeCleanup(tracker, gpt.parameters());
     _safeCleanup(tracker, gpt.parameters());
 
-    if (epoch % 100 == 0) {
+    if (epoch % 10 == 0) {
       print(
         "Epoch $epoch | Loss: ${(totalLoss / blockSize).toStringAsFixed(4)}",
       );
