@@ -102,7 +102,7 @@ void main() {
   const int numHeads = 4;
 
   // MoE configuration (DeepSeekMoE flavour).
-  const int numRoutedExperts = 4;
+  const int numRoutedExperts = 8;
   const int numSharedExperts = 1;
   const int topK = 2;
   const int expertHiddenSize = 32;
@@ -162,21 +162,31 @@ void main() {
   print('  routed experts/layer : $numRoutedExperts (top-$topK active)');
   print('  shared experts/layer : $numSharedExperts');
 
-  // 6. Optimiser. (Adam.lr is final in this codebase, so we use a fixed LR
-  // here. The `warmupCosineLR` helper above is provided for users who wish
-  // to swap in an optimiser whose LR is mutable.)
+  // 6. Optimiser + warmup/cosine LR schedule.
   const double baseLR = 0.001;
+  const double minLR = 0.0001;
   const int numEpochs = 200;
+  final int totalSteps = numEpochs * trainInputs.length;
+  final int warmupSteps = (0.05 * totalSteps).round();
   final optimizer = Adam(model.parameters(), lr: baseLR);
 
   // 7. Dummy encoder output (decoder-only style).
   final dummyEnc = Tensor.zeros([1, embedSize]);
 
   // 8. Training loop.
+  int globalStep = 0;
   for (int epoch = 0; epoch < numEpochs; epoch++) {
     double totalLoss = 0.0;
 
     for (int i = 0; i < trainInputs.length; i++) {
+      optimizer.lr = warmupCosineLR(
+        globalStep,
+        baseLR: baseLR,
+        warmupSteps: warmupSteps,
+        totalSteps: totalSteps,
+        minLR: minLR,
+      );
+
       optimizer.zeroGrad();
       final tracker = <Tensor>[];
 
@@ -189,7 +199,13 @@ void main() {
       optimizer.step();
 
       _safeCleanup(tracker, model.parameters());
+      globalStep++;
     }
+
+    // Snapshot routed-expert load BEFORE the bias update zeros the counters.
+    final loadSnapshot = [
+      for (final b in model.blocks) List<int>.from(b.moe.expertLoad),
+    ];
 
     // DeepSeek-V3 aux-loss-free routing-bias update once per epoch.
     model.updateRoutingBias();
@@ -197,9 +213,12 @@ void main() {
     if ((epoch + 1) % 10 == 0) {
       print(
         'Epoch ${epoch + 1}  '
-        'lr=${baseLR.toStringAsFixed(5)}  '
+        'lr=${optimizer.lr.toStringAsFixed(5)}  '
         'avg_loss=${(totalLoss / trainInputs.length).toStringAsFixed(4)}',
       );
+      for (int li = 0; li < loadSnapshot.length; li++) {
+        print('    layer $li expert load: ${loadSnapshot[li]}');
+      }
     }
   }
 

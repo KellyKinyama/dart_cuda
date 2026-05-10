@@ -2,7 +2,8 @@ import 'gpu_tensor.dart';
 
 class Adam {
   final List<Tensor> params;
-  final double lr, beta1, beta2, eps, gradClip;
+  double lr;
+  final double beta1, beta2, eps, gradClip;
   int t = 0;
 
   // GPU-resident buffers for first (m) and second (v) moments
