@@ -223,7 +223,9 @@ class MuZeroUciEngine {
       bestAlg = _game.toAlgebraic(m);
       _writeln('info string no in-vocab legal moves; falling back to $bestAlg');
     } else {
-      _writeln('info depth 1 score cp ${(bestScore * 100).round()} pv $bestAlg');
+      _writeln(
+        'info depth 1 score cp ${(bestScore * 100).round()} pv $bestAlg',
+      );
     }
 
     _writeln('bestmove $bestAlg');
@@ -413,11 +415,7 @@ Future<void> main(List<String> args) async {
     stderr.writeln('[boot] skipping training; entering UCI loop');
   }
 
-  final engine = MuZeroUciEngine(
-    agent: agent,
-    tok: tok,
-    blockSize: blockSize,
-  );
+  final engine = MuZeroUciEngine(agent: agent, tok: tok, blockSize: blockSize);
   await engine.run();
 }
 
