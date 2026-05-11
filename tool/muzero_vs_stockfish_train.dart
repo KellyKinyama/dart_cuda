@@ -39,6 +39,7 @@ import 'package:dart_cuda/adam.dart';
 import 'package:dart_cuda/dataset/dataset.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
 import 'package:dart_cuda/mu_zero/deepseek_aft_decoder.dart';
+import 'package:dart_cuda/persistence.dart';
 import 'package:dart_cuda/mu_zero/muzero_chess_player.dart'
     show ChessMuZeroAgent, MoveTokenizer, warmupCosineLR;
 
@@ -60,6 +61,11 @@ class TrainCfg {
   double minLR = 1e-4;
 
   int? seed;
+
+  // Checkpointing.
+  String? loadPath;
+  String? savePath;
+  int saveEvery = 1; // save every N iterations
 }
 
 // ---------------------------------------------------------------------------
@@ -84,8 +90,11 @@ class _UciClient {
         .listen((l) => stderr.writeln('[$label STDERR] $l'));
   }
 
-  static Future<_UciClient> spawn(String label, String command,
-      {bool verbose = false}) async {
+  static Future<_UciClient> spawn(
+    String label,
+    String command, {
+    bool verbose = false,
+  }) async {
     final parts = command.trim().split(RegExp(r'\s+'));
     final exe = parts.first;
     final args = parts.skip(1).toList();
@@ -103,8 +112,10 @@ class _UciClient {
     process.stdin.writeln(cmd);
   }
 
-  Future<String> _waitFor(bool Function(String) match,
-      {Duration timeout = const Duration(seconds: 30)}) {
+  Future<String> _waitFor(
+    bool Function(String) match, {
+    Duration timeout = const Duration(seconds: 30),
+  }) {
     final completer = Completer<String>();
     late StreamSubscription sub;
     sub = _lines.stream.listen((line) {
@@ -114,10 +125,13 @@ class _UciClient {
         sub.cancel();
       }
     });
-    return completer.future.timeout(timeout, onTimeout: () {
-      sub.cancel();
-      throw TimeoutException('Timed out waiting for $label');
-    });
+    return completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        sub.cancel();
+        throw TimeoutException('Timed out waiting for $label');
+      },
+    );
   }
 
   Future<void> handshake({int? skillLevel}) async {
@@ -136,8 +150,10 @@ class _UciClient {
     await _waitFor((l) => l.trim() == 'readyok');
   }
 
-  Future<String> bestmoveFromMoves(List<String> moves,
-      {required int movetimeMs}) async {
+  Future<String> bestmoveFromMoves(
+    List<String> moves, {
+    required int movetimeMs,
+  }) async {
     final pos = moves.isEmpty
         ? 'position startpos'
         : 'position startpos moves ${moves.join(' ')}';
@@ -145,8 +161,10 @@ class _UciClient {
     _send('isready');
     await _waitFor((l) => l.trim() == 'readyok');
     _send('go movetime $movetimeMs');
-    final line = await _waitFor((l) => l.startsWith('bestmove'),
-        timeout: Duration(milliseconds: movetimeMs * 5 + 5000));
+    final line = await _waitFor(
+      (l) => l.startsWith('bestmove'),
+      timeout: Duration(milliseconds: movetimeMs * 5 + 5000),
+    );
     return line.split(RegExp(r'\s+'))[1];
   }
 
@@ -155,11 +173,13 @@ class _UciClient {
       _send('quit');
     } catch (_) {}
     await process.stdin.close().catchError((_) {});
-    final exit = await process.exitCode.timeout(const Duration(seconds: 3),
-        onTimeout: () {
-      process.kill();
-      return -1;
-    });
+    final exit = await process.exitCode.timeout(
+      const Duration(seconds: 3),
+      onTimeout: () {
+        process.kill();
+        return -1;
+      },
+    );
     await _stdoutSub.cancel();
     await _stderrSub.cancel();
     await _lines.close();
@@ -286,8 +306,10 @@ Future<_Trajectory> _playOneGame({
       targetId = r.id;
       fromSf = false;
     } else {
-      final sfUci =
-          await stockfish.bestmoveFromMoves(uciHistory, movetimeMs: cfg.sfMovetimeMs);
+      final sfUci = await stockfish.bestmoveFromMoves(
+        uciHistory,
+        movetimeMs: cfg.sfMovetimeMs,
+      );
       if (sfUci == '0000' || sfUci.isEmpty) break;
       final mv = game.getMove(sfUci);
       if (mv == null) break;
@@ -353,10 +375,7 @@ double _trainStep({
   // to predict [m1, ..., m_{n-1}, targetId], i.e. next-token prediction
   // up to and including the Stockfish move we want it to learn.
   final inputs = ctx;
-  final targets = <int>[
-    for (int i = 1; i < ctx.length; i++) ctx[i],
-    targetId,
-  ];
+  final targets = <int>[for (int i = 1; i < ctx.length; i++) ctx[i], targetId];
   final logits = model.forward(inputs, agent.dummyEnc, tracker);
   final loss = logits.crossEntropy(targets);
   tracker.add(loss);
@@ -378,9 +397,11 @@ double _trainStep({
 Future<int> main(List<String> args) async {
   if (args.isEmpty || args.first.startsWith('--')) {
     stderr.writeln(
-        'Usage: dart run tool/muzero_vs_stockfish_train.dart <stockfish> '
-        '[--iters=N] [--games=N] [--epochs=N] [--maxply=N] '
-        '[--sf-movetime=MS] [--sf-skill=N] [--seed=N]');
+      'Usage: dart run tool/muzero_vs_stockfish_train.dart <stockfish> '
+      '[--iters=N] [--games=N] [--epochs=N] [--maxply=N] '
+      '[--sf-movetime=MS] [--sf-skill=N] [--seed=N] '
+      '[--load=PATH] [--save=PATH] [--save-every=N]',
+    );
     return 64;
   }
   final sfPath = args.first;
@@ -400,6 +421,12 @@ Future<int> main(List<String> args) async {
       cfg.sfSkill = int.parse(a.substring('--sf-skill='.length));
     } else if (a.startsWith('--seed=')) {
       cfg.seed = int.parse(a.substring('--seed='.length));
+    } else if (a.startsWith('--load=')) {
+      cfg.loadPath = a.substring('--load='.length);
+    } else if (a.startsWith('--save=')) {
+      cfg.savePath = a.substring('--save='.length);
+    } else if (a.startsWith('--save-every=')) {
+      cfg.saveEvery = int.parse(a.substring('--save-every='.length));
     } else {
       stderr.writeln('Unknown option: $a');
       return 64;
@@ -408,11 +435,19 @@ Future<int> main(List<String> args) async {
 
   stdout.writeln('--- MuZero vs Stockfish trainer (policy distillation) ---');
   stdout.writeln('Stockfish    : $sfPath');
-  stdout.writeln('iters=${cfg.numIterations}  '
-      'games/iter=${cfg.gamesPerIter}  '
-      'epochs/iter=${cfg.trainEpochsPerIter}  '
-      'maxply=${cfg.maxPlies}');
+  stdout.writeln(
+    'iters=${cfg.numIterations}  '
+    'games/iter=${cfg.gamesPerIter}  '
+    'epochs/iter=${cfg.trainEpochsPerIter}  '
+    'maxply=${cfg.maxPlies}',
+  );
   stdout.writeln('SF movetime  : ${cfg.sfMovetimeMs} ms  skill=${cfg.sfSkill}');
+  if (cfg.loadPath != null) stdout.writeln('Load ckpt    : ${cfg.loadPath}');
+  if (cfg.savePath != null) {
+    stdout.writeln(
+      'Save ckpt    : ${cfg.savePath} (every ${cfg.saveEvery} iter)',
+    );
+  }
 
   final rng = math.Random(cfg.seed ?? 42);
 
@@ -446,6 +481,14 @@ Future<int> main(List<String> args) async {
     expertHiddenSize: expertHiddenSize,
   );
   final agent = ChessMuZeroAgent(model);
+  if (cfg.loadPath != null) {
+    if (!File(cfg.loadPath!).existsSync()) {
+      stderr.writeln('Checkpoint not found: ${cfg.loadPath}');
+      return 66;
+    }
+    await loadModuleBinary(model, cfg.loadPath!);
+    stdout.writeln('Loaded checkpoint from ${cfg.loadPath}');
+  }
   final optimizer = Adam(agent.parameters(), lr: cfg.baseLR);
   stdout.writeln('Model params : ${agent.parameters().length}');
 
@@ -454,19 +497,20 @@ Future<int> main(List<String> args) async {
 
   // Rough total-step counter for warmup-cosine LR.
   int globalStep = 0;
-  final approxSteps = cfg.numIterations *
+  final approxSteps =
+      cfg.numIterations *
       cfg.gamesPerIter *
       cfg.maxPlies *
       cfg.trainEpochsPerIter;
   final warmup = math.max(1, (0.05 * approxSteps).round());
 
   double currentLR() => warmupCosineLR(
-        globalStep,
-        baseLR: cfg.baseLR,
-        warmupSteps: warmup,
-        totalSteps: math.max(approxSteps, warmup + 1),
-        minLR: cfg.minLR,
-      );
+    globalStep,
+    baseLR: cfg.baseLR,
+    warmupSteps: warmup,
+    totalSteps: math.max(approxSteps, warmup + 1),
+    minLR: cfg.minLR,
+  );
 
   final sw = Stopwatch()..start();
   int gameIndex = 0;
@@ -477,8 +521,10 @@ Future<int> main(List<String> args) async {
     for (int g = 0; g < cfg.gamesPerIter; g++) {
       final muzeroIsWhite = gameIndex.isEven;
       final sideLabel = muzeroIsWhite ? 'White' : 'Black';
-      stdout.write('  game ${g + 1}/${cfg.gamesPerIter} '
-          '(MuZero=$sideLabel) ... ');
+      stdout.write(
+        '  game ${g + 1}/${cfg.gamesPerIter} '
+        '(MuZero=$sideLabel) ... ',
+      );
       final traj = await _playOneGame(
         agent: agent,
         tok: tok,
@@ -488,12 +534,15 @@ Future<int> main(List<String> args) async {
         muzeroIsWhite: muzeroIsWhite,
       );
       trajectories.add(traj);
-      final muzeroResult =
-          muzeroIsWhite ? traj.finalResultForWhite : -traj.finalResultForWhite;
+      final muzeroResult = muzeroIsWhite
+          ? traj.finalResultForWhite
+          : -traj.finalResultForWhite;
       final sfCount = traj.steps.where((s) => s.fromStockfish).length;
-      stdout.writeln('${traj.steps.length} plies '
-          '(${sfCount} SF teacher steps), '
-          'muzero_result=${muzeroResult.toStringAsFixed(1)}');
+      stdout.writeln(
+        '${traj.steps.length} plies '
+        '(${sfCount} SF teacher steps), '
+        'muzero_result=${muzeroResult.toStringAsFixed(1)}',
+      );
       gameIndex++;
     }
 
@@ -533,17 +582,28 @@ Future<int> main(List<String> args) async {
         }
       }
       if (n > 0) {
-        stdout.writeln('  epoch ${epoch + 1}/${cfg.trainEpochsPerIter}  '
-            'pairs=$n  '
-            'lr=${currentLR().toStringAsFixed(5)}  '
-            'mean_loss=${(lossSum / n).toStringAsFixed(4)}');
+        stdout.writeln(
+          '  epoch ${epoch + 1}/${cfg.trainEpochsPerIter}  '
+          'pairs=$n  '
+          'lr=${currentLR().toStringAsFixed(5)}  '
+          'mean_loss=${(lossSum / n).toStringAsFixed(4)}',
+        );
       }
+    }
+
+    // Periodic checkpoint save.
+    if (cfg.savePath != null &&
+        ((iter + 1) % cfg.saveEvery == 0 || iter == cfg.numIterations - 1)) {
+      await saveModuleBinary(model, cfg.savePath!);
+      stdout.writeln('  saved checkpoint -> ${cfg.savePath}');
     }
   }
 
   sw.stop();
-  stdout.writeln('\nTotal wall-clock: '
-      '${(sw.elapsedMilliseconds / 1000).toStringAsFixed(2)} s');
+  stdout.writeln(
+    '\nTotal wall-clock: '
+    '${(sw.elapsedMilliseconds / 1000).toStringAsFixed(2)} s',
+  );
 
   await stockfish.quit();
   return 0;
