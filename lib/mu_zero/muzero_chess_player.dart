@@ -102,11 +102,14 @@ class ChessMuZeroAgent {
     return model.lmHead.forward(state, tracker);
   }
 
-  /// f_value(s) : latent state -> raw scalar value per row (no activation).
-  /// MSE against {-1, 0, +1} works directly; squash with tanh externally
-  /// if you need a probability.
+  /// f_value(s) : latent state -> scalar in (-1, +1) per row, squashed
+  /// with tanh so MSE against {-1, 0, +1} cannot blow up the shared
+  /// backbone via huge unbounded predictions.
   Tensor predictValue(Tensor state, List<Tensor> tracker) {
-    return valueHead.forward(state, tracker);
+    final raw = valueHead.forward(state, tracker);
+    final squashed = raw.tanh();
+    tracker.add(squashed);
+    return squashed;
   }
 
   List<Tensor> parameters() => [

@@ -489,6 +489,7 @@ class Tensor {
   }
 
   Tensor sigmoid() => Tensor._raw(engine.sigmoidTensor(_handle), shape);
+  Tensor tanh() => Tensor._raw(engine.tanhTensor(_handle), shape);
   Tensor pow(double e) => Tensor._raw(engine.powTensor(_handle, e), shape);
   Tensor log() => Tensor._raw(engine.logTensor(_handle), shape);
 
