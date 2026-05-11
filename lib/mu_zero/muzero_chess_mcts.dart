@@ -300,9 +300,7 @@ class ZobristMcts {
 
   List<int> _trimCtx(List<int> history) {
     final ctx = [tok.startId, ...history];
-    return ctx.length <= blockSize
-        ? ctx
-        : ctx.sublist(ctx.length - blockSize);
+    return ctx.length <= blockSize ? ctx : ctx.sublist(ctx.length - blockSize);
   }
 
   void _safeCleanupAgent(List<Tensor> tracker) {
@@ -319,4 +317,83 @@ class ZobristMcts {
       }
     }
   }
+}
+
+/// Pick the next move using PUCT MCTS over the current position. Returns
+/// `null` if there is no legal move that is also in the tokenizer's
+/// vocabulary. When [temperature] is 0 the most-visited action is
+/// returned; otherwise a sample is drawn from `visits^(1/temperature)`.
+({String uci, int id, Move move})? pickNextMoveMcts(
+  ChessMuZeroAgent agent,
+  MoveTokenizer tok,
+  Game game,
+  List<int> history,
+  int blockSize, {
+  required int numSimulations,
+  double cPuct = 1.4,
+  double temperature = 0.0,
+  math.Random? rng,
+}) {
+  if (numSimulations <= 0) return null;
+  final mcts = ZobristMcts(
+    agent,
+    tok,
+    blockSize: blockSize,
+    cPuct: cPuct,
+    rng: rng,
+  );
+  final root = mcts.run(
+    rootGame: game,
+    history: history,
+    numSimulations: numSimulations,
+  );
+  if (root.legalMoves.isEmpty) return null;
+
+  int pickIdx;
+  if (temperature <= 0.0) {
+    pickIdx = 0;
+    int bestN = -1;
+    for (int i = 0; i < root.visits.length; i++) {
+      if (root.visits[i] > bestN) {
+        bestN = root.visits[i];
+        pickIdx = i;
+      }
+    }
+  } else {
+    final r = rng ?? math.Random();
+    final invT = 1.0 / temperature;
+    final weights = [
+      for (final v in root.visits) math.pow(v + 1e-9, invT).toDouble(),
+    ];
+    final total = weights.fold<double>(0.0, (a, b) => a + b);
+    if (total <= 0) {
+      pickIdx = 0;
+    } else {
+      final pick = r.nextDouble() * total;
+      double acc = 0.0;
+      pickIdx = weights.length - 1;
+      for (int i = 0; i < weights.length; i++) {
+        acc += weights[i];
+        if (acc >= pick) {
+          pickIdx = i;
+          break;
+        }
+      }
+    }
+  }
+
+  final uci = root.legalUci[pickIdx];
+  final mv = root.legalMoves[pickIdx];
+  final id = tok.encode(uci);
+  if (id == null) {
+    // Fall back to the highest-visit move whose UCI is in vocab.
+    for (int i = 0; i < root.visits.length; i++) {
+      final mid = tok.encode(root.legalUci[i]);
+      if (mid != null) {
+        return (uci: root.legalUci[i], id: mid, move: root.legalMoves[i]);
+      }
+    }
+    return null;
+  }
+  return (uci: uci, id: id, move: mv);
 }

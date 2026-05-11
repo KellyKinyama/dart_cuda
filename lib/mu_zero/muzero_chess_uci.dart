@@ -39,6 +39,7 @@ import 'muzero_chess_player.dart'
         MoveTokenizer,
         buildTrajectory,
         warmupCosineLR;
+import 'muzero_chess_mcts.dart' show pickNextMoveMcts;
 
 void _safeCleanup(List<Tensor> tracker, List<Tensor> params) {
   final freed = <int>{};
@@ -69,6 +70,11 @@ class MuZeroUciEngine {
 
   late Game _game;
   final List<int> _history = []; // tokenized move history (no <start>)
+
+  /// Number of PUCT simulations per `go`. 0 disables MCTS and falls back
+  /// to depth-1 policy argmax. Settable via
+  /// `setoption name MctsSims value <N>`.
+  int mctsSims = 0;
 
   Completer<void>? _quitCompleter;
 
@@ -114,6 +120,7 @@ class MuZeroUciEngine {
       case 'uci':
         _writeln('id name $name');
         _writeln('id author $author');
+        _writeln('option name MctsSims type spin default 0 min 0 max 100000');
         _writeln('uciok');
         break;
       case 'isready':
@@ -133,6 +140,8 @@ class MuZeroUciEngine {
         // Search is synchronous; nothing to do.
         break;
       case 'setoption':
+        _handleSetOption(parts);
+        break;
       case 'ponderhit':
         break;
       case 'quit':
@@ -188,6 +197,24 @@ class MuZeroUciEngine {
       return;
     }
 
+    // MCTS branch.
+    if (mctsSims > 0) {
+      final picked = pickNextMoveMcts(
+        agent,
+        tok,
+        _game,
+        _history,
+        blockSize,
+        numSimulations: mctsSims,
+      );
+      if (picked != null) {
+        _writeln('info depth 1 nodes $mctsSims pv ${picked.uci} string mcts');
+        _writeln('bestmove ${picked.uci}');
+        return;
+      }
+      _writeln('info string mcts produced no in-vocab move; falling back');
+    }
+
     // Score legal moves using the trained policy head.
     final tracker = <Tensor>[];
     final ctx = [tok.startId, ..._history];
@@ -229,6 +256,21 @@ class MuZeroUciEngine {
     }
 
     _writeln('bestmove $bestAlg');
+  }
+
+  /// Parses `setoption name <Name> value <Value>` lines. Only `MctsSims`
+  /// is honored; everything else is silently ignored as the UCI spec
+  /// allows.
+  void _handleSetOption(List<String> parts) {
+    final nameIdx = parts.indexOf('name');
+    final valueIdx = parts.indexOf('value');
+    if (nameIdx == -1 || valueIdx == -1 || valueIdx <= nameIdx + 1) return;
+    final name = parts.sublist(nameIdx + 1, valueIdx).join(' ');
+    final value = parts.sublist(valueIdx + 1).join(' ');
+    if (name.toLowerCase() == 'mctssims') {
+      final n = int.tryParse(value);
+      if (n != null && n >= 0) mctsSims = n;
+    }
   }
 
   /// Exposed for tests.

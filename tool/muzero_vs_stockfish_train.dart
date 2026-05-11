@@ -43,6 +43,8 @@ import 'package:dart_cuda/nn.dart' show Module;
 import 'package:dart_cuda/persistence.dart';
 import 'package:dart_cuda/mu_zero/muzero_chess_player.dart'
     show ChessMuZeroAgent, MoveTokenizer, warmupCosineLR;
+import 'package:dart_cuda/mu_zero/muzero_chess_mcts.dart'
+    show pickNextMoveMcts;
 
 // ---------------------------------------------------------------------------
 // Hyperparameters (overridable via CLI)
@@ -68,6 +70,12 @@ class TrainCfg {
   String? loadPath;
   String? savePath;
   int saveEvery = 1; // save every N iterations
+
+  // MCTS exploration for MuZero's self-play moves. 0 disables MCTS and
+  // falls back to depth-1 policy argmax. Targets remain Stockfish's move
+  // (the trainer is still distillation).
+  int mctsSims = 0;
+  double mctsTemperature = 1.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +334,17 @@ Future<_Trajectory> _playOneGame({
     bool fromSf;
 
     if (muzeroToMove) {
-      final r = _muzeroPickMove(agent, tok, game, tokHistory, blockSize);
+      final r = cfg.mctsSims > 0
+          ? pickNextMoveMcts(
+              agent,
+              tok,
+              game,
+              tokHistory.sublist(1), // strip leading <start>; helper re-adds it
+              blockSize,
+              numSimulations: cfg.mctsSims,
+              temperature: cfg.mctsTemperature,
+            )
+          : _muzeroPickMove(agent, tok, game, tokHistory, blockSize);
       if (r == null) break;
       chosenMove = r.move;
       chosenUci = r.uci;
@@ -451,7 +469,8 @@ Future<int> main(List<String> args) async {
       'Usage: dart run tool/muzero_vs_stockfish_train.dart <stockfish> '
       '[--iters=N] [--games=N] [--epochs=N] [--maxply=N] '
       '[--sf-movetime=MS] [--sf-skill=N] [--seed=N] '
-      '[--load=PATH] [--save=PATH] [--save-every=N]',
+      '[--load=PATH] [--save=PATH] [--save-every=N] '
+      '[--mcts-sims=N] [--mcts-temp=F]',
     );
     return 64;
   }
@@ -478,6 +497,10 @@ Future<int> main(List<String> args) async {
       cfg.savePath = a.substring('--save='.length);
     } else if (a.startsWith('--save-every=')) {
       cfg.saveEvery = int.parse(a.substring('--save-every='.length));
+    } else if (a.startsWith('--mcts-sims=')) {
+      cfg.mctsSims = int.parse(a.substring('--mcts-sims='.length));
+    } else if (a.startsWith('--mcts-temp=')) {
+      cfg.mctsTemperature = double.parse(a.substring('--mcts-temp='.length));
     } else {
       stderr.writeln('Unknown option: $a');
       return 64;

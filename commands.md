@@ -42,6 +42,23 @@ dart run lib/mu_zero/muzero_chess_uci.dart            # trains then enters UCI l
 dart run lib/mu_zero/muzero_chess_uci.dart --no-train  # quick handshake test
 ```
 
+Enable Zobrist-keyed PUCT MCTS at play time (works in any UCI GUI / match):
+
+```
+setoption name MctsSims value 64
+```
+
+Train with MCTS exploration for MuZero's self-play moves (targets still
+Stockfish's move — distillation):
+
+```bash
+dart run tool/muzero_vs_stockfish_train.dart tools/stockfish \
+  --iters=3 --games=2 --epochs=2 --maxply=80 \
+  --sf-movetime=300 --sf-skill=20 \
+  --mcts-sims=32 --mcts-temp=1.0 \
+  --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
+```
+
 Self-play demo (train then play one greedy game):
 
 ```bash
