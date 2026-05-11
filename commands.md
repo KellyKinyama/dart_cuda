@@ -54,3 +54,7 @@ Build Stockfish (Linux) from bundled source:
 cd tools/sf/stockfish/src && make -j$(nproc) build ARCH=x86-64-avx2
 cp stockfish ../../../stockfish && chmod +x ../../../stockfish
 ```
+dart run tool/muzero_vs_stockfish_train.dart tools/stockfish \
+  --iters=3 --games=2 --epochs=2 --maxply=80 \
+  --sf-movetime=300 --sf-skill=20 \
+  --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
