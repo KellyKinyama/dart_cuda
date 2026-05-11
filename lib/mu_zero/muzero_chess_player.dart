@@ -79,12 +79,7 @@ class ChessMuZeroAgent {
   }
 
   /// g(s_t, a_t) : (state-row, action) -> next latent state.
-  Tensor dynamics(
-    Tensor stateRow,
-    int action,
-    int step,
-    List<Tensor> tracker,
-  ) {
+  Tensor dynamics(Tensor stateRow, int action, int step, List<Tensor> tracker) {
     final actionEmb = model.wte.getRow(action);
     final posEmb = model.wpe.getRow(step % model.blockSize);
     final strongAction = actionEmb * actionScale;
