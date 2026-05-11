@@ -200,7 +200,8 @@ class _Step {
 class _Trajectory {
   final List<_Step> steps;
   final double finalResultForWhite; // +1, 0, -1
-  _Trajectory(this.steps, this.finalResultForWhite);
+  final bool finished; // true if checkmate/stalemate/draw; false if maxply or abort
+  _Trajectory(this.steps, this.finalResultForWhite, this.finished);
 }
 
 void _safeCleanup(List<Tensor> tracker, List<Tensor> params) {
@@ -344,7 +345,7 @@ Future<_Trajectory> _playOneGame({
   } else {
     resultWhite = 0.0;
   }
-  return _Trajectory(steps, resultWhite);
+  return _Trajectory(steps, resultWhite, game.gameOver);
 }
 
 // ---------------------------------------------------------------------------
@@ -514,9 +515,17 @@ Future<int> main(List<String> args) async {
 
   final sw = Stopwatch()..start();
   int gameIndex = 0;
+  int totalWins = 0;
+  int totalDraws = 0;
+  int totalLosses = 0;
+  int totalUnfinished = 0; // games hit maxply with no checkmate
   for (int iter = 0; iter < cfg.numIterations; iter++) {
     stdout.writeln('\n=== Iteration ${iter + 1}/${cfg.numIterations} ===');
     final trajectories = <_Trajectory>[];
+    int iterWins = 0;
+    int iterDraws = 0;
+    int iterLosses = 0;
+    int iterUnfinished = 0;
 
     for (int g = 0; g < cfg.gamesPerIter; g++) {
       final muzeroIsWhite = gameIndex.isEven;
@@ -538,13 +547,41 @@ Future<int> main(List<String> args) async {
           ? traj.finalResultForWhite
           : -traj.finalResultForWhite;
       final sfCount = traj.steps.where((s) => s.fromStockfish).length;
+      String outcome;
+      if (!traj.finished) {
+        outcome = 'unfinished';
+        iterUnfinished++;
+      } else if (muzeroResult > 0.5) {
+        outcome = 'WIN';
+        iterWins++;
+      } else if (muzeroResult < -0.5) {
+        outcome = 'loss';
+        iterLosses++;
+      } else {
+        outcome = 'draw';
+        iterDraws++;
+      }
       stdout.writeln(
         '${traj.steps.length} plies '
         '(${sfCount} SF teacher steps), '
-        'muzero_result=${muzeroResult.toStringAsFixed(1)}',
+        '$outcome',
       );
       gameIndex++;
     }
+
+    totalWins += iterWins;
+    totalDraws += iterDraws;
+    totalLosses += iterLosses;
+    totalUnfinished += iterUnfinished;
+    final iterPlayed = iterWins + iterDraws + iterLosses;
+    final iterScore = iterPlayed > 0
+        ? (iterWins + 0.5 * iterDraws) / iterPlayed
+        : 0.0;
+    stdout.writeln(
+      '  iter record: ${iterWins}W-${iterDraws}D-${iterLosses}L '
+      '(${iterUnfinished} unfinished)  '
+      'score=${(iterScore * 100).toStringAsFixed(1)}%',
+    );
 
     model.updateRoutingBias();
 
@@ -600,6 +637,19 @@ Future<int> main(List<String> args) async {
   }
 
   sw.stop();
+  final totalPlayed = totalWins + totalDraws + totalLosses;
+  final overallScore = totalPlayed > 0
+      ? (totalWins + 0.5 * totalDraws) / totalPlayed
+      : 0.0;
+  stdout.writeln('\n=== Final record vs Stockfish ===');
+  stdout.writeln(
+    'W=${totalWins}  D=${totalDraws}  L=${totalLosses}  '
+    '(unfinished=${totalUnfinished})',
+  );
+  stdout.writeln(
+    'win_rate=${totalPlayed > 0 ? (totalWins / totalPlayed * 100).toStringAsFixed(1) : '0.0'}%  '
+    'score=${(overallScore * 100).toStringAsFixed(1)}%',
+  );
   stdout.writeln(
     '\nTotal wall-clock: '
     '${(sw.elapsedMilliseconds / 1000).toStringAsFixed(2)} s',
