@@ -95,7 +95,7 @@ Future<void> main() async {
 
   const double baseLR = 0.001;
   const double minLR = 0.0001;
-  const int numSteps = 1000;
+  const int numSteps = 10000;
   const int balanceEvery = 50;
   const int logEvery = 50;
   final int warmupSteps = (0.05 * numSteps).round();
