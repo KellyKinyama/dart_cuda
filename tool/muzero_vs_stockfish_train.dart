@@ -39,6 +39,7 @@ import 'package:dart_cuda/adam.dart';
 import 'package:dart_cuda/dataset/dataset.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
 import 'package:dart_cuda/mu_zero/deepseek_aft_decoder.dart';
+import 'package:dart_cuda/nn.dart' show Module;
 import 'package:dart_cuda/persistence.dart';
 import 'package:dart_cuda/mu_zero/muzero_chess_player.dart'
     show ChessMuZeroAgent, MoveTokenizer, warmupCosineLR;
@@ -59,6 +60,7 @@ class TrainCfg {
   int unrollSteps = 3;
   double baseLR = 1e-3;
   double minLR = 1e-4;
+  double valueWeight = 0.5;
 
   int? seed;
 
@@ -194,14 +196,38 @@ class _Step {
   final List<int> historyIds; // tokens BEFORE this move (incl. <start>)
   final int targetMoveId;
   final bool fromStockfish;
-  _Step(this.historyIds, this.targetMoveId, this.fromStockfish);
+  final bool moverIsWhite; // side to move at this step
+  _Step(
+    this.historyIds,
+    this.targetMoveId,
+    this.fromStockfish,
+    this.moverIsWhite,
+  );
 }
 
 class _Trajectory {
   final List<_Step> steps;
   final double finalResultForWhite; // +1, 0, -1
-  final bool finished; // true if checkmate/stalemate/draw; false if maxply or abort
+  final bool
+  finished; // true if checkmate/stalemate/draw; false if maxply or abort
   _Trajectory(this.steps, this.finalResultForWhite, this.finished);
+}
+
+class _TrainPair {
+  final _Step step;
+  final _Trajectory trajectory;
+  _TrainPair(this.step, this.trajectory);
+}
+
+/// Module adapter so `saveModuleBinary`/`loadModuleBinary` (which expect a
+/// [Module]) round-trip the full agent (decoder + value head) instead of
+/// just the decoder. The order of parameters is fixed by
+/// `ChessMuZeroAgent.parameters()`.
+class _AgentModule extends Module {
+  final ChessMuZeroAgent agent;
+  _AgentModule(this.agent);
+  @override
+  List<Tensor> parameters() => agent.parameters();
 }
 
 void _safeCleanup(List<Tensor> tracker, List<Tensor> params) {
@@ -331,7 +357,14 @@ Future<_Trajectory> _playOneGame({
       fromSf = true;
     }
 
-    steps.add(_Step(List<int>.from(tokHistory), targetId, fromSf));
+    steps.add(
+      _Step(
+        List<int>.from(tokHistory),
+        targetId,
+        fromSf,
+        mover == Bishop.white,
+      ),
+    );
 
     game.makeMove(chosenMove);
     uciHistory.add(chosenUci);
@@ -349,16 +382,20 @@ Future<_Trajectory> _playOneGame({
 }
 
 // ---------------------------------------------------------------------------
-// Train one step on a (history, target) pair using policy cross-entropy.
+// Train one step on a (history, target, valueTarget) tuple using
+// policy cross-entropy + value MSE on the final state.
+// Returns (policyLoss, valueLoss). Either may be NaN on failure.
 // ---------------------------------------------------------------------------
-double _trainStep({
+({double policy, double value}) _trainStep({
   required ChessMuZeroAgent agent,
   required DeepSeekAFTDecoder model,
   required Adam optimizer,
   required List<int> history,
   required int targetId,
+  required double valueTarget,
   required int blockSize,
   required double lr,
+  required double valueWeight,
 }) {
   optimizer.lr = lr;
   optimizer.zeroGrad();
@@ -369,27 +406,40 @@ double _trainStep({
       : history.sublist(history.length - blockSize);
   if (ctx.isEmpty) {
     _safeCleanup(tracker, agent.parameters());
-    return double.nan;
+    return (policy: double.nan, value: double.nan);
   }
-  // The engine's `crossEntropy` averages over every position in the
-  // sequence. For an [<start>, m1, ..., m_{n-1}] prefix we ask the model
-  // to predict [m1, ..., m_{n-1}, targetId], i.e. next-token prediction
-  // up to and including the Stockfish move we want it to learn.
-  final inputs = ctx;
+  // Forward through the shared representation, then split into the two
+  // heads. crossEntropy averages over every position in the sequence;
+  // targets for positions 0..T-2 are the next history token, and position
+  // T-1 is the Stockfish move we want the model to learn.
+  final states = agent.representation(ctx, tracker);
+  final logits = agent.predictPolicy(states, tracker);
+  final values = agent.predictValue(states, tracker); // [T, 1]
   final targets = <int>[for (int i = 1; i < ctx.length; i++) ctx[i], targetId];
-  final logits = model.forward(inputs, agent.dummyEnc, tracker);
-  final loss = logits.crossEntropy(targets);
+
+  final pLoss = logits.crossEntropy(targets);
+  tracker.add(pLoss);
+
+  // Value loss only on the last row (post-Stockfish-move state).
+  final lastValueRow = values.getRow(ctx.length - 1); // [1]
+  final target = Tensor.fill(lastValueRow.shape, valueTarget);
+  final diff = lastValueRow - target;
+  final vLoss = diff.pow(2).mean();
+  tracker.addAll([lastValueRow, target, diff, vLoss]);
+
+  final loss = pLoss + (vLoss * valueWeight);
   tracker.add(loss);
 
-  final lossVal = loss.fetchData()[0];
-  if (lossVal.isNaN || lossVal.isInfinite) {
+  final pVal = pLoss.fetchData()[0];
+  final vVal = vLoss.fetchData()[0];
+  if (pVal.isNaN || pVal.isInfinite || vVal.isNaN || vVal.isInfinite) {
     _safeCleanup(tracker, agent.parameters());
-    return double.nan;
+    return (policy: double.nan, value: double.nan);
   }
   loss.backward();
   optimizer.step();
   _safeCleanup(tracker, agent.parameters());
-  return lossVal;
+  return (policy: pVal, value: vVal);
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +537,7 @@ Future<int> main(List<String> args) async {
       stderr.writeln('Checkpoint not found: ${cfg.loadPath}');
       return 66;
     }
-    await loadModuleBinary(model, cfg.loadPath!);
+    await loadModuleBinary(_AgentModule(agent), cfg.loadPath!);
     stdout.writeln('Loaded checkpoint from ${cfg.loadPath}');
   }
   final optimizer = Adam(agent.parameters(), lr: cfg.baseLR);
@@ -585,12 +635,13 @@ Future<int> main(List<String> args) async {
 
     model.updateRoutingBias();
 
-    // Build a flat list of (history, target) pairs from SF-teacher steps.
-    // (MuZero-own steps would only teach the model to imitate itself.)
-    final pairs = <_Step>[];
+    // Build a flat list of (history, target, value-target) pairs from
+    // SF-teacher steps. (MuZero-own steps would only teach the model
+    // to imitate itself.)
+    final pairs = <_TrainPair>[];
     for (final traj in trajectories) {
       for (final s in traj.steps) {
-        if (s.fromStockfish) pairs.add(s);
+        if (s.fromStockfish) pairs.add(_TrainPair(s, traj));
       }
     }
     if (pairs.isEmpty) {
@@ -600,21 +651,30 @@ Future<int> main(List<String> args) async {
 
     for (int epoch = 0; epoch < cfg.trainEpochsPerIter; epoch++) {
       pairs.shuffle(rng);
-      double lossSum = 0.0;
+      double pLossSum = 0.0;
+      double vLossSum = 0.0;
       int n = 0;
       for (final p in pairs) {
+        // Value target = final game result from this step's mover's POV.
+        final trajResultWhite = p.trajectory.finalResultForWhite;
+        final valueTarget = p.step.moverIsWhite
+            ? trajResultWhite
+            : -trajResultWhite;
         final l = _trainStep(
           agent: agent,
           model: model,
           optimizer: optimizer,
-          history: p.historyIds,
-          targetId: p.targetMoveId,
+          history: p.step.historyIds,
+          targetId: p.step.targetMoveId,
+          valueTarget: valueTarget,
           blockSize: blockSize,
           lr: currentLR(),
+          valueWeight: cfg.valueWeight,
         );
         globalStep++;
-        if (!l.isNaN) {
-          lossSum += l;
+        if (!l.policy.isNaN) {
+          pLossSum += l.policy;
+          vLossSum += l.value;
           n++;
         }
       }
@@ -623,15 +683,17 @@ Future<int> main(List<String> args) async {
           '  epoch ${epoch + 1}/${cfg.trainEpochsPerIter}  '
           'pairs=$n  '
           'lr=${currentLR().toStringAsFixed(5)}  '
-          'mean_loss=${(lossSum / n).toStringAsFixed(4)}',
+          'policy=${(pLossSum / n).toStringAsFixed(4)}  '
+          'value=${(vLossSum / n).toStringAsFixed(4)}',
         );
       }
     }
 
-    // Periodic checkpoint save.
+    // Periodic checkpoint save. We persist the full agent (decoder +
+    // value head) so resuming restores the value predictor too.
     if (cfg.savePath != null &&
         ((iter + 1) % cfg.saveEvery == 0 || iter == cfg.numIterations - 1)) {
-      await saveModuleBinary(model, cfg.savePath!);
+      await saveModuleBinary(_AgentModule(agent), cfg.savePath!);
       stdout.writeln('  saved checkpoint -> ${cfg.savePath}');
     }
   }

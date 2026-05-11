@@ -22,6 +22,7 @@ import 'package:dart_cuda/adam.dart';
 import 'package:dart_cuda/dataset/dataset.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
 import 'package:dart_cuda/mu_zero/deepseek_aft_decoder.dart';
+import 'package:dart_cuda/nn.dart' show Layer;
 
 // ---------------------------------------------------------------------------
 // Move tokenizer over moves actually seen in training. Keeping the vocab
@@ -65,8 +66,14 @@ class ChessMuZeroAgent {
   final Tensor dummyEnc;
   final double actionScale;
 
+  /// Value head: latent state -> scalar in (-1, +1) interpreted as the
+  /// expected game outcome for the side to move (+1 = win, 0 = draw,
+  /// -1 = loss). Trained alongside policy via MSE on game results.
+  final Layer valueHead;
+
   ChessMuZeroAgent(this.model, {this.actionScale = 5.0})
-    : dummyEnc = Tensor.zeros([1, model.encoderEmbedSize]);
+    : dummyEnc = Tensor.zeros([1, model.encoderEmbedSize]),
+      valueHead = Layer(model.embedSize, 1, useGelu: false);
 
   /// h(x) : decoder forward through final LayerNorm. Returns [T, D].
   Tensor representation(List<int> moveIds, List<Tensor> tracker) {
@@ -90,12 +97,22 @@ class ChessMuZeroAgent {
     return next;
   }
 
-  /// f(s) : latent state -> move logits.
+  /// f_policy(s) : latent state -> move logits.
   Tensor predictPolicy(Tensor state, List<Tensor> tracker) {
     return model.lmHead.forward(state, tracker);
   }
 
-  List<Tensor> parameters() => model.parameters();
+  /// f_value(s) : latent state -> raw scalar value per row (no activation).
+  /// MSE against {-1, 0, +1} works directly; squash with tanh externally
+  /// if you need a probability.
+  Tensor predictValue(Tensor state, List<Tensor> tracker) {
+    return valueHead.forward(state, tracker);
+  }
+
+  List<Tensor> parameters() => [
+    ...model.parameters(),
+    ...valueHead.parameters(),
+  ];
 }
 
 // ---------------------------------------------------------------------------
