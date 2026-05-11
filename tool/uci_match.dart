@@ -58,8 +58,10 @@ class UciClient {
   }
 
   /// Waits for a line that satisfies [match]. Returns the matching line.
-  Future<String> waitFor(bool Function(String) match,
-      {Duration timeout = const Duration(seconds: 30)}) {
+  Future<String> waitFor(
+    bool Function(String) match, {
+    Duration timeout = const Duration(seconds: 30),
+  }) {
     final completer = Completer<String>();
     late StreamSubscription sub;
     sub = _lines.stream.listen((line) {
@@ -69,10 +71,13 @@ class UciClient {
         sub.cancel();
       }
     });
-    return completer.future.timeout(timeout, onTimeout: () {
-      sub.cancel();
-      throw TimeoutException('Timed out waiting for $label');
-    });
+    return completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        sub.cancel();
+        throw TimeoutException('Timed out waiting for $label');
+      },
+    );
   }
 
   Future<void> handshake() async {
@@ -90,8 +95,10 @@ class UciClient {
     send('isready');
     await waitFor((l) => l.trim() == 'readyok');
     send('go movetime $movetimeMs');
-    final line = await waitFor((l) => l.startsWith('bestmove'),
-        timeout: Duration(milliseconds: movetimeMs * 5 + 5000));
+    final line = await waitFor(
+      (l) => l.startsWith('bestmove'),
+      timeout: Duration(milliseconds: movetimeMs * 5 + 5000),
+    );
     return line.split(RegExp(r'\s+'))[1];
   }
 
@@ -100,11 +107,13 @@ class UciClient {
       send('quit');
     } catch (_) {}
     await process.stdin.close().catchError((_) {});
-    final exit = await process.exitCode.timeout(const Duration(seconds: 3),
-        onTimeout: () {
-      process.kill();
-      return -1;
-    });
+    final exit = await process.exitCode.timeout(
+      const Duration(seconds: 3),
+      onTimeout: () {
+        process.kill();
+        return -1;
+      },
+    );
     await _stdoutSub.cancel();
     await _stderrSub.cancel();
     await _lines.close();
@@ -156,7 +165,8 @@ String _renderBoard(String fen) {
 Future<int> main(List<String> args) async {
   if (args.length < 2) {
     stderr.writeln(
-        'Usage: dart run tool/uci_match.dart <engineA> <engineB> [--movetime=MS] [--maxply=N] [--skill=N]');
+      'Usage: dart run tool/uci_match.dart <engineA> <engineB> [--movetime=MS] [--maxply=N] [--skill=N]',
+    );
     return 64;
   }
 
@@ -178,9 +188,11 @@ Future<int> main(List<String> args) async {
 
   stdout.writeln('Engine A (White): $cmdA');
   stdout.writeln('Engine B (Black): $cmdB');
-  stdout.writeln('movetime=${movetime}ms, '
-      'maxply=${maxPly ?? 'unlimited (play to completion)'}'
-      '${skillLevel != null ? ', skill=$skillLevel' : ''}');
+  stdout.writeln(
+    'movetime=${movetime}ms, '
+    'maxply=${maxPly ?? 'unlimited (play to completion)'}'
+    '${skillLevel != null ? ', skill=$skillLevel' : ''}',
+  );
   stdout.writeln('');
 
   final a = await UciClient.spawn('A', cmdA);
@@ -227,10 +239,7 @@ Future<int> main(List<String> args) async {
 
     final String moveUci;
     try {
-      moveUci = await mover.bestmove(
-        positionCmd: posCmd,
-        movetimeMs: movetime,
-      );
+      moveUci = await mover.bestmove(positionCmd: posCmd, movetimeMs: movetime);
     } catch (e) {
       stderr.writeln('[$moverLabel] failed to produce a move: $e');
       resultStr = (ply % 2 == 0) ? '0-1' : '1-0';
@@ -248,7 +257,8 @@ Future<int> main(List<String> args) async {
     final mv = game.getMove(moveUci);
     if (mv == null) {
       stderr.writeln(
-          '[$moverLabel] produced ILLEGAL move "$moveUci" in position $posCmd');
+        '[$moverLabel] produced ILLEGAL move "$moveUci" in position $posCmd',
+      );
       resultStr = (ply % 2 == 0) ? '0-1' : '1-0';
       terminationReason = '$moverLabel illegal move $moveUci';
       break;

@@ -7,3 +7,11 @@ chess_gpt.bin
 Faces
 Original Images
 shakespeare_gpt_2.bin
+
+# Stockfish (Linux build + source tree + Windows binary + archives)
+tools/stockfish
+tools/stockfish.exe
+tools/stockfish.tar
+tools/stockfish.zip
+tools/sf/
+output.log
