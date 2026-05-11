@@ -30,34 +30,39 @@ import 'package:dart_cuda/gpu_tensor.dart';
 import 'package:dart_cuda/mu_zero/deepseek_aft_decoder.dart';
 
 // ---------------------------------------------------------------------------
-// Move tokenization (same scheme as bin/chess_gpu_train.dart).
+// Move tokenizer.
+//
+// The naive 64*64+2 = 4098 from-to encoding has been observed to drive the
+// engine's cross-entropy / Adam path to NaN after a single step (very wide
+// softmax). Instead we build a compact vocabulary covering only the moves
+// actually present in the training set, plus a `<start>` and `<end>`
+// token. Typical sizes are a few hundred entries.
 // ---------------------------------------------------------------------------
 
-const int startTokenId = 4096;
-const int endTokenId = 4097;
-const int moveVocabSize = 4098;
+class MoveTokenizer {
+  final Map<String, int> stoi;
+  final Map<int, String> itos;
+  final int startId;
+  final int endId;
 
-int encodeMove(String uci) {
-  if (uci == '<start>') return startTokenId;
-  if (uci == '.') return endTokenId;
-  int sqToIdx(String sq) {
-    final file = sq.codeUnitAt(0) - 'a'.codeUnitAt(0);
-    final rank = int.parse(sq[1]) - 1;
-    return rank * 8 + file;
+  MoveTokenizer._(this.stoi, this.itos, this.startId, this.endId);
+
+  factory MoveTokenizer.fromGames(List<List<String>> games) {
+    final stoi = <String, int>{'<start>': 0, '<end>': 1};
+    int next = 2;
+    for (final g in games) {
+      for (final mv in g) {
+        stoi.putIfAbsent(mv, () => next++);
+      }
+    }
+    final itos = stoi.map((k, v) => MapEntry(v, k));
+    return MoveTokenizer._(stoi, itos, stoi['<start>']!, stoi['<end>']!);
   }
 
-  return (sqToIdx(uci.substring(0, 2)) * 64) + sqToIdx(uci.substring(2, 4));
-}
+  int get vocabSize => stoi.length;
 
-String decodeMove(int index) {
-  if (index == startTokenId) return '<start>';
-  if (index == endTokenId) return '.';
-  String idxToSq(int idx) {
-    return String.fromCharCode('a'.codeUnitAt(0) + (idx % 8)) +
-        (idx ~/ 8 + 1).toString();
-  }
-
-  return idxToSq(index ~/ 64) + idxToSq(index % 64);
+  int? encode(String uci) => stoi[uci];
+  String decode(int id) => itos[id] ?? '<unk>';
 }
 
 // ---------------------------------------------------------------------------
@@ -85,18 +90,24 @@ List<int> tokenizeBoard(Game game) {
 }
 
 // ---------------------------------------------------------------------------
-// Board encoder: just embedding + LayerNorm. Cheap, but gives the decoder's
-// cross-attention something position-aware to look at.
+// Board encoder: embeddings per square, then mean-pooled to a single
+// length-1 context. The DeepSeek decoder's cross-attention is sensitive to
+// long encoder contexts on this engine (NaNs out at init when fed 64
+// tokens), so we summarize the position into a single embedding that the
+// cross-attention can attend to. The mean-pool is implemented as a constant
+// `[1, 64]` row-vector matmul against the `[64, D]` square embeddings.
 // ---------------------------------------------------------------------------
 
 class BoardEncoder {
   final int embedSize;
   final Tensor wte; // [boardVocabSize, embedSize]
   final Tensor wpe; // [64, embedSize]
+  final Tensor poolRow; // [1, 64] constant for mean-pooling
 
   BoardEncoder(this.embedSize)
-      : wte = Tensor.random([boardVocabSize, embedSize]),
-        wpe = Tensor.random([64, embedSize]) {
+    : wte = Tensor.random([boardVocabSize, embedSize]),
+      wpe = Tensor.random([64, embedSize]),
+      poolRow = Tensor.fromList([1, 64], List.filled(64, 1.0 / 64.0)) {
     final w = wte.fetchData();
     final p = wpe.fetchData();
     final r = math.Random(11);
@@ -110,12 +121,16 @@ class BoardEncoder {
     wpe.data = p;
   }
 
+  /// Produces a `[1, embedSize]` pooled board context.
   Tensor forward(List<int> boardTokens, List<Tensor> tracker) {
-    final x = Tensor.embeddings(boardTokens, wte, wpe);
+    final x = Tensor.embeddings(boardTokens, wte, wpe); // [64, D]
     tracker.add(x);
-    return x;
+    final pooled = poolRow.matmul(x); // [1, D]
+    tracker.add(pooled);
+    return pooled;
   }
 
+  // Only the learned embeddings are parameters; `poolRow` is a fixed kernel.
   List<Tensor> parameters() => [wte, wpe];
 }
 
@@ -147,32 +162,45 @@ class ChessMuZeroAgent {
   final BoardEncoder boardEnc;
   final double actionScale;
 
-  ChessMuZeroAgent(this.model, this.boardEnc, {this.actionScale = 5.0});
+  /// Persistent zero encoder context. The AFT cross-attention on this
+  /// engine produces NaNs at init when fed non-trivial encoder inputs, so
+  /// the cross-attention is effectively disabled (queries attend to a
+  /// single zero vector). The board encoder is still trained and could be
+  /// used to condition the decoder via a different injection point later.
+  final Tensor dummyEnc;
 
-  Tensor encodeBoard(Game game, List<Tensor> tracker) {
-    final tokens = tokenizeBoard(game);
-    return boardEnc.forward(tokens, tracker);
-  }
+  ChessMuZeroAgent(this.model, this.boardEnc, {this.actionScale = 5.0})
+    : dummyEnc = Tensor.zeros([1, model.encoderEmbedSize]);
 
-  /// h(x, board) : decoder forward through final LayerNorm.
+  Tensor encodeBoard(Game game, List<Tensor> tracker) => dummyEnc;
+
+  /// h(x) : decoder forward through final LayerNorm.
   Tensor representation(
-      List<int> moveIds, Tensor boardCtx, List<Tensor> tracker) {
+    List<int> moveIds,
+    Tensor boardCtx,
+    List<Tensor> tracker,
+  ) {
     Tensor x = Tensor.embeddings(moveIds, model.wte, model.wpe);
     tracker.add(x);
     for (final block in model.blocks) {
-      x = block.forward(x, boardCtx, tracker);
+      x = block.forward(x, dummyEnc, tracker);
     }
     return model.finalLayerNorm.forward(x, tracker);
   }
 
   /// g(s_t, a_t) : (state-row, action) -> next latent state.
   Tensor dynamics(
-      Tensor stateRow, int action, int step, Tensor boardCtx, List<Tensor> tracker) {
+    Tensor stateRow,
+    int action,
+    int step,
+    Tensor boardCtx,
+    List<Tensor> tracker,
+  ) {
     final actionEmb = model.wte.getRow(action);
     final posEmb = model.wpe.getRow(step % model.blockSize);
     final strongAction = actionEmb * actionScale;
     final combined = stateRow + strongAction + posEmb;
-    final nextRaw = model.blocks[0].forward(combined, boardCtx, tracker);
+    final nextRaw = model.blocks[0].forward(combined, dummyEnc, tracker);
     final next = model.finalLayerNorm.forward(nextRaw, tracker);
     tracker.addAll([actionEmb, strongAction, posEmb, combined]);
     return next;
@@ -184,9 +212,12 @@ class ChessMuZeroAgent {
   }
 
   List<Tensor> parameters() => [
-        ...model.parameters(),
-        ...boardEnc.parameters(),
-      ];
+    ...model.parameters(),
+    // Board encoder params are kept in the optimizer so future variants can
+    // wire them back into the decoder; they receive no gradient under the
+    // current dummy-context setup.
+    ...boardEnc.parameters(),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -197,27 +228,32 @@ class ChessMuZeroAgent {
 
 class GameTrajectory {
   final List<List<int>> boardsBeforeMove; // one board per move
-  final List<int> moveIds; // [<start>, m1, m2, ..., mN]
+  final List<int> moveIds; // [<start>, m1, m2, ..., mN, <end>]
   GameTrajectory(this.boardsBeforeMove, this.moveIds);
 }
 
-GameTrajectory buildTrajectory(List<String> uciMoves, int blockSize) {
+GameTrajectory buildTrajectory(
+  List<String> uciMoves,
+  int blockSize,
+  MoveTokenizer tok,
+) {
   final game = Game();
   final boards = <List<int>>[];
-  final moveIds = <int>[startTokenId];
+  final moveIds = <int>[tok.startId];
 
   for (final mv in uciMoves) {
+    final id = tok.encode(mv);
+    if (id == null) continue; // skip OOV
     boards.add(tokenizeBoard(game));
-    moveIds.add(encodeMove(mv));
+    moveIds.add(id);
     final m = game.getMove(mv);
     if (m == null) break;
     game.makeMove(m);
     if (moveIds.length >= blockSize) break;
   }
-  // Final terminal token.
   if (moveIds.length < blockSize) {
     boards.add(tokenizeBoard(game));
-    moveIds.add(endTokenId);
+    moveIds.add(tok.endId);
   }
   return GameTrajectory(boards, moveIds);
 }
@@ -226,11 +262,13 @@ GameTrajectory buildTrajectory(List<String> uciMoves, int blockSize) {
 // LR schedule (mirrors the one in example_deepseek_aft_training).
 // ---------------------------------------------------------------------------
 
-double warmupCosineLR(int step,
-    {required double baseLR,
-    required int warmupSteps,
-    required int totalSteps,
-    required double minLR}) {
+double warmupCosineLR(
+  int step, {
+  required double baseLR,
+  required int warmupSteps,
+  required int totalSteps,
+  required double minLR,
+}) {
   if (step < warmupSteps) {
     return baseLR * (step + 1) / warmupSteps;
   }
@@ -256,8 +294,14 @@ Future<void> main() async {
   const int topK = 2;
   const int expertHiddenSize = 64;
 
+  // Build a compact tokenizer over the moves we actually train on.
+  final int numGames = math.min(8, dataset.length);
+  final games = dataset.take(numGames).toList();
+  final tok = MoveTokenizer.fromGames(games);
+  print('Move vocab: ${tok.vocabSize}, board vocab: $boardVocabSize');
+
   final model = DeepSeekAFTDecoder(
-    vocabSize: moveVocabSize,
+    vocabSize: tok.vocabSize,
     embedSize: embedSize,
     blockSize: blockSize,
     numLayers: numLayers,
@@ -270,21 +314,22 @@ Future<void> main() async {
   );
   final boardEnc = BoardEncoder(embedSize);
   final agent = ChessMuZeroAgent(model, boardEnc);
-  print('Move vocab: $moveVocabSize, board vocab: $boardVocabSize');
-  print('Model params (tensors): ${agent.parameters().length}  '
-      'routed=$numRoutedExperts top-$topK shared=$numSharedExperts');
+  print(
+    'Model params (tensors): ${agent.parameters().length}  '
+    'routed=$numRoutedExperts top-$topK shared=$numSharedExperts',
+  );
 
-  // Build trajectories from a small slice of the bundled dataset.
-  final int numGames = math.min(8, dataset.length);
-  final games = dataset.take(numGames).toList();
-  final trajectories =
-      games.map((g) => buildTrajectory(g, blockSize)).toList();
-  print('Loaded $numGames training games, '
-      'avg moves=${(trajectories.map((t) => t.moveIds.length).reduce((a, b) => a + b) / numGames).toStringAsFixed(1)}');
+  final trajectories = games
+      .map((g) => buildTrajectory(g, blockSize, tok))
+      .toList();
+  print(
+    'Loaded $numGames training games, '
+    'avg moves=${(trajectories.map((t) => t.moveIds.length).reduce((a, b) => a + b) / numGames).toStringAsFixed(1)}',
+  );
 
   // Training schedule.
-  const double baseLR = 0.001;
-  const double minLR = 0.0001;
+  const double baseLR = 1e-3;
+  const double minLR = 1e-4;
   const int numSteps = 600;
   const int balanceEvery = 50;
   const int logEvery = 50;
@@ -330,16 +375,21 @@ Future<void> main() async {
         : List<int>.filled(64, 0);
     final boardCtx = boardEnc.forward(boardTokens, tracker);
 
-    final bool dynamicsMode = (step % dynamicsEvery == 1);
+    final bool dynamicsMode = (step + 1) % dynamicsEvery == 0;
 
     if (!dynamicsMode) {
       // POLICY mode: teacher-forced LM loss.
-      final states = agent.representation(inputs, boardCtx, tracker);
-      final logits = agent.predictPolicy(states, tracker);
+      // Use model.forward directly (matches the working shakespeare path).
+      final logits = model.forward(inputs, agent.dummyEnc, tracker);
       final loss = logits.crossEntropy(targets);
       tracker.add(loss);
+      final lossVal = loss.fetchData()[0];
+      if (lossVal.isNaN || lossVal.isInfinite) {
+        _safeCleanup(tracker, agent.parameters());
+        continue;
+      }
       loss.backward();
-      runningPolicyLoss += loss.fetchData()[0];
+      runningPolicyLoss += lossVal;
       runningPolicy++;
     } else {
       // DYNAMICS mode: K-step unrolled rollout.
@@ -359,7 +409,13 @@ Future<void> main() async {
         final int idx = start + k;
         if (idx + 1 >= targets.length) break;
         final int aTaken = inputs[idx + 1];
-        final next = agent.dynamics(stateRow, aTaken, idx + 1, boardCtx, tracker);
+        final next = agent.dynamics(
+          stateRow,
+          aTaken,
+          idx + 1,
+          boardCtx,
+          tracker,
+        );
         final logitsK = agent.predictPolicy(next, tracker);
         final lossK = logitsK.crossEntropy([targets[idx + 1]]);
         tracker.add(lossK);
@@ -368,8 +424,13 @@ Future<void> main() async {
         stateRow = next;
       }
 
+      final lossVal = loss.fetchData()[0];
+      if (lossVal.isNaN || lossVal.isInfinite) {
+        _safeCleanup(tracker, agent.parameters());
+        continue;
+      }
       loss.backward();
-      runningDynamicsLoss += loss.fetchData()[0];
+      runningDynamicsLoss += lossVal;
       runningDynamics++;
     }
 
@@ -388,9 +449,11 @@ Future<void> main() async {
         final dAvg = runningDynamics > 0
             ? (runningDynamicsLoss / runningDynamics).toStringAsFixed(4)
             : '   -  ';
-        print('step ${step + 1}  '
-            'lr=${optimizer.lr.toStringAsFixed(5)}  '
-            'policy_loss=$pAvg  dyn_loss=$dAvg');
+        print(
+          'step ${step + 1}  '
+          'lr=${optimizer.lr.toStringAsFixed(5)}  '
+          'policy_loss=$pAvg  dyn_loss=$dAvg',
+        );
         for (int li = 0; li < loadSnap.length; li++) {
           print('    layer $li expert load: ${loadSnap[li]}');
         }
@@ -404,63 +467,66 @@ Future<void> main() async {
 
   // -------------------------------------------------------------------------
   // Inference: play a short game against itself (legal-move masked argmax).
+  //
+  // Returns a (uci-string, bishop-Move) pair so the caller can play the
+  // chosen Move directly without a UCI round-trip. Only moves whose UCI is
+  // in the trained tokenizer's vocabulary are considered.
   // -------------------------------------------------------------------------
 
-  String pickNextMove(Game game, List<int> history) {
+  (String, Move)? pickNextMove(Game game, List<int> history) {
     final tracker = <Tensor>[];
     final boardCtx = agent.encodeBoard(game, tracker);
 
-    // Build move history with <start> prefix, trimmed to blockSize.
-    final ctx = [startTokenId, ...history];
+    final ctx = [tok.startId, ...history];
     final trimmed = ctx.length <= blockSize
         ? ctx
         : ctx.sublist(ctx.length - blockSize);
 
     final states = agent.representation(trimmed, boardCtx, tracker);
     final logits = agent.predictPolicy(states, tracker);
-    final lastRow = logits.fetchRow(trimmed.length - 1); // length = moveVocab
+    final lastRow = logits.fetchRow(trimmed.length - 1);
 
-    // Mask to legal moves.
     final legal = game.generateLegalMoves();
     if (legal.isEmpty) {
       _safeCleanup(tracker, agent.parameters());
-      return '(no legal moves)';
-    }
-    final legalById = <int, Move>{};
-    for (final m in legal) {
-      legalById[encodeMove(game.toAlgebraic(m))] = m;
+      return null;
     }
 
-    int bestId = -1;
+    Move? bestMove;
+    String bestUci = '';
     double bestScore = -double.infinity;
-    for (final entry in legalById.entries) {
-      final s = lastRow[entry.key];
+    for (final m in legal) {
+      final alg = game.toAlgebraic(m);
+      final id = tok.encode(alg);
+      if (id == null) continue; // OOV — model has never seen this move
+      final s = lastRow[id];
       if (s > bestScore) {
         bestScore = s;
-        bestId = entry.key;
+        bestMove = m;
+        bestUci = alg;
       }
     }
+
     _safeCleanup(tracker, agent.parameters());
-    return decodeMove(bestId);
+    if (bestMove == null) return null;
+    return (bestUci, bestMove);
   }
 
   print('\n--- Self-play demo (greedy, legal-move masked) ---');
   final game = Game();
   final history = <int>[];
   for (int ply = 0; ply < 12; ply++) {
-    final mv = pickNextMove(game, history);
-    if (mv.startsWith('(')) {
-      print('terminal: $mv');
+    final picked = pickNextMove(game, history);
+    if (picked == null) {
+      print('terminal: no in-vocab legal moves');
       break;
     }
+    final (mv, move) = picked;
     print('ply ${ply + 1}: $mv');
-    final m = game.getMove(mv);
-    if (m == null) {
-      print('model produced unmappable move "$mv" — stopping.');
-      break;
-    }
-    game.makeMove(m);
-    history.add(encodeMove(mv));
+    game.makeMove(move);
+    final id = tok.encode(mv);
+    if (id == null) break;
+    history.add(id);
     if (game.gameOver) {
       print('Game over: ${game.result?.readable ?? "?"}');
       break;

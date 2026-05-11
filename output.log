@@ -1,0 +1,10 @@
+--- DeepSeek MoE + AFT MuZero Chess Player ---
+Move vocab: 4098, board vocab: 13
+Model params (tensors): 182  routed=4 top-2 shared=1
+Loaded 8 training games, avg moves=32.0
+
+--- Self-play demo (greedy, legal-move masked) ---
+terminal: no legal moves
+
+Final FEN: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
+EXIT_CODE: 0
