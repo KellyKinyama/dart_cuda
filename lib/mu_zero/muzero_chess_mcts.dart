@@ -47,6 +47,13 @@ class MctsNode {
 
   double q(int i) => visits[i] == 0 ? 0.0 : totalActionValue[i] / visits[i];
 
+  /// Q value used when *selecting* an action during PUCT descent. We
+  /// follow Brainlearn's `UCB_UNEXPANDED_NODE = 1.0` trick: untried
+  /// children get a maximally optimistic value so every move is forced
+  /// to be tried at least once before exploitation kicks in.
+  double qSelect(int i) =>
+      visits[i] == 0 ? 1.0 : totalActionValue[i] / visits[i];
+
   /// Distribution of visit counts over the action space of the tokenizer.
   /// Used as a soft policy target for MuZero-style training.
   List<double> visitDistribution(MoveTokenizer tok) {
@@ -67,6 +74,10 @@ class ZobristMcts {
   final MoveTokenizer tok;
   final int blockSize;
   final double cPuct;
+  /// Weight in [0, 1] of the minimax (max-over-children) update during
+  /// back-propagation. 0 = pure value-average (vanilla AlphaZero), 1 =
+  /// pure minimax up the tree (Brainlearn's default).
+  final double backupMinimax;
   final math.Random rng;
   final Map<int, MctsNode> _table = {};
 
@@ -75,6 +86,7 @@ class ZobristMcts {
     this.tok, {
     required this.blockSize,
     this.cPuct = 1.4,
+    this.backupMinimax = 0.5,
     math.Random? rng,
   }) : rng = rng ?? math.Random();
 
@@ -137,13 +149,15 @@ class ZobristMcts {
   }
 
   /// PUCT score: Q(s,a) + cPuct * P(s,a) * sqrt(N(s)) / (1 + N(s,a)).
+  /// Uses the optimistic [MctsNode.qSelect] so unvisited children look
+  /// attractive until they have been tried at least once.
   int _selectAction(MctsNode node) {
     final sqrtN = math.sqrt(node.n.toDouble() + 1e-8);
     int bestI = 0;
     double bestScore = -double.infinity;
     for (int i = 0; i < node.legalMoves.length; i++) {
       final u = cPuct * node.priors[i] * sqrtN / (1 + node.visits[i]);
-      final s = node.q(i) + u;
+      final s = node.qSelect(i) + u;
       if (s > bestScore) {
         bestScore = s;
         bestI = i;
@@ -153,7 +167,9 @@ class ZobristMcts {
   }
 
   /// Back up [leafValue], flipping sign at every ply because the value
-  /// is always from the side-to-move's POV.
+  /// is always from the side-to-move's POV. After each edge update we
+  /// blend in the *best* child's Q (minimax-style) controlled by
+  /// [backupMinimax], mirroring Brainlearn's `BACKUP_MINIMAX` knob.
   void _backprop(List<(MctsNode, int)> path, double leafValue) {
     double v = -leafValue; // last edge's parent moved; flip into parent POV
     for (int p = path.length - 1; p >= 0; p--) {
@@ -161,6 +177,18 @@ class ZobristMcts {
       node.visits[i] += 1;
       node.totalActionValue[i] += v;
       node.n += 1;
+
+      if (backupMinimax > 0.0 && node.legalMoves.isNotEmpty) {
+        double bestQ = -double.infinity;
+        for (int j = 0; j < node.legalMoves.length; j++) {
+          if (node.visits[j] == 0) continue;
+          final qj = node.q(j);
+          if (qj > bestQ) bestQ = qj;
+        }
+        if (bestQ != -double.infinity) {
+          v = v * (1.0 - backupMinimax) + bestQ * backupMinimax;
+        }
+      }
       v = -v;
     }
   }
@@ -351,11 +379,15 @@ class ZobristMcts {
 
   int pickIdx;
   if (temperature <= 0.0) {
+    // Robust-choice score (Brainlearn's CompareRobustChoice): prefer the
+    // most-visited edge, with the network's prior as the tie-breaker
+    // for low-visit moves. Equivalent to `10*visits + prior` ranking.
     pickIdx = 0;
-    int bestN = -1;
+    double bestScore = -double.infinity;
     for (int i = 0; i < root.visits.length; i++) {
-      if (root.visits[i] > bestN) {
-        bestN = root.visits[i];
+      final s = 10.0 * root.visits[i] + root.priors[i];
+      if (s > bestScore) {
+        bestScore = s;
         pickIdx = i;
       }
     }
