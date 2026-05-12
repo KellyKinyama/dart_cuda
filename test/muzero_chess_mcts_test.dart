@@ -31,10 +31,10 @@ void main() {
     final uci = [for (final m in legal) game.toAlgebraic(m)];
 
     MctsNode make() => _node(
-          legal: legal,
-          uci: uci,
-          priors: List<double>.filled(legal.length, 1.0 / legal.length),
-        );
+      legal: legal,
+      uci: uci,
+      priors: List<double>.filled(legal.length, 1.0 / legal.length),
+    );
 
     test('unvisited edge: q=0.0, qSelect=1.0 (optimistic)', () {
       final n = make();
@@ -68,36 +68,38 @@ void main() {
       expect(dist.every((p) => p == 0.0), isTrue);
     });
 
-    test('non-empty: distribution sums to 1 and is concentrated on legal moves',
-        () {
-      final n = _node(
-        legal: legal,
-        uci: uci,
-        priors: List<double>.filled(legal.length, 1.0 / legal.length),
-      );
-      // Pretend we visited the first three legal moves with N = [2, 1, 1].
-      n.visits[0] = 2;
-      n.visits[1] = 1;
-      n.visits[2] = 1;
-      n.n = 4;
+    test(
+      'non-empty: distribution sums to 1 and is concentrated on legal moves',
+      () {
+        final n = _node(
+          legal: legal,
+          uci: uci,
+          priors: List<double>.filled(legal.length, 1.0 / legal.length),
+        );
+        // Pretend we visited the first three legal moves with N = [2, 1, 1].
+        n.visits[0] = 2;
+        n.visits[1] = 1;
+        n.visits[2] = 1;
+        n.n = 4;
 
-      final dist = n.visitDistribution(tok);
-      // Sum to 1.
-      final s = dist.fold<double>(0.0, (a, b) => a + b);
-      expect(s, closeTo(1.0, 1e-9));
+        final dist = n.visitDistribution(tok);
+        // Sum to 1.
+        final s = dist.fold<double>(0.0, (a, b) => a + b);
+        expect(s, closeTo(1.0, 1e-9));
 
-      // Visited moves get their share; everything else stays 0.
-      final id0 = tok.encode(uci[0])!;
-      final id1 = tok.encode(uci[1])!;
-      final id2 = tok.encode(uci[2])!;
-      expect(dist[id0], closeTo(0.5, 1e-9));
-      expect(dist[id1], closeTo(0.25, 1e-9));
-      expect(dist[id2], closeTo(0.25, 1e-9));
+        // Visited moves get their share; everything else stays 0.
+        final id0 = tok.encode(uci[0])!;
+        final id1 = tok.encode(uci[1])!;
+        final id2 = tok.encode(uci[2])!;
+        expect(dist[id0], closeTo(0.5, 1e-9));
+        expect(dist[id1], closeTo(0.25, 1e-9));
+        expect(dist[id2], closeTo(0.25, 1e-9));
 
-      // An unvisited but legal move should remain 0.
-      final id3 = tok.encode(uci[3])!;
-      expect(dist[id3], 0.0);
-    });
+        // An unvisited but legal move should remain 0.
+        final id3 = tok.encode(uci[3])!;
+        expect(dist[id3], 0.0);
+      },
+    );
   });
 
   group('MctsNode terminal flag', () {
