@@ -43,8 +43,7 @@ import 'package:dart_cuda/nn.dart' show Module;
 import 'package:dart_cuda/persistence.dart';
 import 'package:dart_cuda/mu_zero/muzero_chess_player.dart'
     show ChessMuZeroAgent, MoveTokenizer, warmupCosineLR;
-import 'package:dart_cuda/mu_zero/muzero_chess_mcts.dart'
-    show pickNextMoveMcts;
+import 'package:dart_cuda/mu_zero/muzero_chess_mcts.dart' show pickNextMoveMcts;
 
 // ---------------------------------------------------------------------------
 // Hyperparameters (overridable via CLI)
@@ -176,6 +175,65 @@ class _UciClient {
       timeout: Duration(milliseconds: movetimeMs * 5 + 5000),
     );
     return line.split(RegExp(r'\s+'))[1];
+  }
+
+  /// Evaluate the position reached after [moves] from the startpos and
+  /// return a value squashed into [-1, 1] from **white's** POV. We track
+  /// the last `info ... score cp X` or `score mate Y` line emitted before
+  /// `bestmove` and convert: cp → tanh(cp/600), mate → ±0.99 (sign of N).
+  Future<double> evalForWhiteFromMoves(
+    List<String> moves, {
+    required int movetimeMs,
+    required bool whiteToMove,
+  }) async {
+    final pos = moves.isEmpty
+        ? 'position startpos'
+        : 'position startpos moves ${moves.join(' ')}';
+    _send(pos);
+    _send('isready');
+    await _waitFor((l) => l.trim() == 'readyok');
+
+    int? lastCp;
+    int? lastMate;
+    final scoreSub = _lines.stream.listen((line) {
+      if (!line.startsWith('info ')) return;
+      final parts = line.split(RegExp(r'\s+'));
+      final i = parts.indexOf('score');
+      if (i == -1 || i + 2 >= parts.length) return;
+      final kind = parts[i + 1];
+      final val = int.tryParse(parts[i + 2]);
+      if (val == null) return;
+      if (kind == 'cp') {
+        lastCp = val;
+        lastMate = null;
+      } else if (kind == 'mate') {
+        lastMate = val;
+        lastCp = null;
+      }
+    });
+
+    _send('go movetime $movetimeMs');
+    try {
+      await _waitFor(
+        (l) => l.startsWith('bestmove'),
+        timeout: Duration(milliseconds: movetimeMs * 5 + 5000),
+      );
+    } finally {
+      await scoreSub.cancel();
+    }
+
+    double mover; // value from side-to-move's POV in [-1, 1]
+    if (lastMate != null) {
+      mover = lastMate! >= 0 ? 0.99 : -0.99;
+    } else if (lastCp != null) {
+      final x = lastCp! / 600.0;
+      final ep = math.exp(x);
+      final en = math.exp(-x);
+      mover = (ep - en) / (ep + en);
+    } else {
+      mover = 0.0;
+    }
+    return whiteToMove ? mover : -mover;
   }
 
   Future<void> quit() async {
@@ -391,12 +449,26 @@ Future<_Trajectory> _playOneGame({
   }
 
   double resultWhite;
+  bool finished = game.gameOver;
   if (game.checkmate) {
     resultWhite = game.state.turn == Bishop.white ? -1.0 : 1.0;
-  } else {
+  } else if (finished) {
     resultWhite = 0.0;
+  } else {
+    // Unfinished (hit maxply or aborted): ask Stockfish for an eval at
+    // the current position so the value head still gets a meaningful
+    // target instead of a flat draw.
+    try {
+      resultWhite = await stockfish.evalForWhiteFromMoves(
+        uciHistory,
+        movetimeMs: cfg.sfMovetimeMs,
+        whiteToMove: game.state.turn == Bishop.white,
+      );
+    } catch (_) {
+      resultWhite = 0.0;
+    }
   }
-  return _Trajectory(steps, resultWhite, game.gameOver);
+  return _Trajectory(steps, resultWhite, finished);
 }
 
 // ---------------------------------------------------------------------------
