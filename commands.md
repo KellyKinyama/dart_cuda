@@ -82,3 +82,10 @@ dart run tool/muzero_vs_stockfish_train.dart tools/stockfish \
   --sf-movetime=300 --sf-skill=20 \
   --mcts-sims=32 --mcts-temp=1.0 \
   --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
+
+  
+  dart run tool/muzero_vs_stockfish_train.dart tools/stockfish \
+  --iters=3 --games=2 --epochs=2 --maxply=80 \
+  --sf-movetime=300 --sf-skill=20 \
+  --mcts-sims=3 --mcts-temp=1.0 \
+  --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1

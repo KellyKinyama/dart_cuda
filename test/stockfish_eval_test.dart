@@ -173,6 +173,8 @@ void main() {
         },
       );
     },
-    skip: hasStockfish ? null : 'tools/stockfish not present; run `cd tools/sf/stockfish/src && make build` first',
+    skip: hasStockfish
+        ? null
+        : 'tools/stockfish not present; run `cd tools/sf/stockfish/src && make build` first',
   );
 }

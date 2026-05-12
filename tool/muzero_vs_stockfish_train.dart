@@ -694,7 +694,8 @@ Future<int> main(List<String> args) async {
       final sfCount = traj.steps.where((s) => s.fromStockfish).length;
       String outcome;
       if (!traj.finished) {
-        outcome = 'unfinished';
+        // Show the SF eval (from MuZero's POV) used as the value target.
+        outcome = 'unfinished (sf eval=${muzeroResult.toStringAsFixed(2)})';
         iterUnfinished++;
       } else if (muzeroResult > 0.5) {
         outcome = 'WIN';
