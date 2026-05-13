@@ -147,7 +147,8 @@ void main() {
       });
 
       // After backward, gradients should be non-zero somewhere…
-      final hasGrad = layer.w.grad.any((g) => g.abs() > 1e-9) ||
+      final hasGrad =
+          layer.w.grad.any((g) => g.abs() > 1e-9) ||
           layer.b.grad.any((g) => g.abs() > 1e-9);
       expect(hasGrad, isTrue);
 
