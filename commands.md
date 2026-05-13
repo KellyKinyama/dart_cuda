@@ -31,15 +31,15 @@ Play a UCI match between the MuZero engine and Stockfish:
 
 ```bash
 dart run tool/uci_match.dart \
-  "dart run lib/mu_zero/muzero_chess_uci.dart --no-train" \
+  "dart run example/mu_zero/muzero_chess_uci.dart --no-train" \
   tools/stockfish --movetime=300 --maxply=80
 ```
 
 Run the MuZero engine standalone (UCI on stdio, e.g. for a chess GUI):
 
 ```bash
-dart run lib/mu_zero/muzero_chess_uci.dart            # trains then enters UCI loop
-dart run lib/mu_zero/muzero_chess_uci.dart --no-train  # quick handshake test
+dart run example/mu_zero/muzero_chess_uci.dart            # trains then enters UCI loop
+dart run example/mu_zero/muzero_chess_uci.dart --no-train  # quick handshake test
 ```
 
 Enable Zobrist-keyed PUCT MCTS at play time (works in any UCI GUI / match):
