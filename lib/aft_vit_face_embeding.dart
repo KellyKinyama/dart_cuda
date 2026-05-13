@@ -1,6 +1,6 @@
-import 'aft_vit_backbone.dart';
-import 'gpu_tensor.dart';
-import 'nn.dart';
+import 'package:dart_cuda/aft_vit_backbone.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/nn.dart';
 
 class ViTFaceEmbeddingGPU extends Module {
   final ViTBackbone backbone;

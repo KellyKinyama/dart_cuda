@@ -3,7 +3,7 @@ library dart_cuda;
 import 'dart:typed_data';
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
-import 'engine.dart';
+import 'package:dart_cuda/core/engine.dart';
 
 part 'mat_mul.dart';
 // part 'engine.dart';

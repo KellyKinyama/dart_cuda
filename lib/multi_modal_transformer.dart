@@ -1,9 +1,9 @@
 // file: multimodal_transformer.dart
 
-import 'gpu_tensor.dart';
-import 'audio_transformer.dart';
-import 'nn.dart';
-import 'video_transformer.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/audio_transformer.dart';
+import 'package:dart_cuda/nn.dart';
+import 'package:dart_cuda/video_transformer.dart';
 
 class MultimodalTransformer extends Module {
   final AudioTransformer audioModel;

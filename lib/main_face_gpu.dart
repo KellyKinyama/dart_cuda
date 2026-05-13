@@ -1,9 +1,9 @@
 // file: lib/main_face_gpu.dart
 
-import 'aft_vit_face_embeding.dart';
-import 'gpu_tensor.dart';
-import 'adam.dart';
-import 'triplet_loss.dart';
+import 'package:dart_cuda/aft_vit_face_embeding.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/adam.dart';
+import 'package:dart_cuda/triplet_loss.dart';
 
 void main() {
   print("🚀 GPU Face Recognition: Stable Training Loop");

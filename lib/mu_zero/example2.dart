@@ -1,7 +1,7 @@
-import '../aft_muzero_transformer_decoder.dart';
-import '../gpu_tensor.dart';
-import '../adam.dart';
-import 'muzero_greedy_agent.dart';
+import 'package:dart_cuda/aft_muzero_transformer_decoder.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/adam.dart';
+import 'package:dart_cuda/mu_zero/muzero_greedy_agent.dart';
 
 void main() {
   print("--- Stable Tensor-Engine MuZero-GPT: Training & Generation ---");

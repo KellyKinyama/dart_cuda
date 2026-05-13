@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'gpu_tensor.dart';
-import 'nn.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/nn.dart';
 
 /// Saves GPU weights to a flat binary file.
 Future<void> saveModuleBinary(Module module, String filePath) async {

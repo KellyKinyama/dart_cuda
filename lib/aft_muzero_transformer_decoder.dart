@@ -2,10 +2,10 @@ import 'dart:math' as math;
 
 import 'package:dart_cuda/adam.dart';
 
-import 'aft_transformer_decoder_block.dart';
-import 'gpu_tensor.dart';
-import 'layer_norm.dart';
-import 'nn.dart';
+import 'package:dart_cuda/aft_transformer_decoder_block.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/layer_norm.dart';
+import 'package:dart_cuda/nn.dart';
 
 
 class TransformerDecoder extends Module {

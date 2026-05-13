@@ -25,7 +25,7 @@ import 'dart:math' as math;
 
 import 'package:bishop/bishop.dart';
 import 'package:dart_cuda/adam.dart';
-import 'package:dart_cuda/dataset/dataset.dart';
+import 'package:dart_cuda/loaders/dataset.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
 import 'package:dart_cuda/mu_zero/deepseek_aft_decoder.dart';
 

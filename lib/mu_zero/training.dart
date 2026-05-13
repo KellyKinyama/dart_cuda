@@ -1,6 +1,6 @@
-import '../adam.dart';
-import '../gpu_tensor.dart';
-import 'muzero_greedy_agent.dart';
+import 'package:dart_cuda/adam.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/mu_zero/muzero_greedy_agent.dart';
 
 void trainMuZero(
   MuZeroGreedyAgent agent,

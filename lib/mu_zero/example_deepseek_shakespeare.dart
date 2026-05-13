@@ -10,8 +10,8 @@ import 'dart:math' as math;
 import 'package:dart_cuda/adam.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
 
-import 'deepseek_aft_decoder.dart';
-import 'example_deepseek_aft_training.dart' show warmupCosineLR, sampleToken;
+import 'package:dart_cuda/mu_zero/deepseek_aft_decoder.dart';
+import 'package:dart_cuda/mu_zero/example_deepseek_aft_training.dart' show warmupCosineLR, sampleToken;
 
 class CharTokenizer {
   late final List<String> chars;

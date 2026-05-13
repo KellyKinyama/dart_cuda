@@ -2,7 +2,7 @@ import 'dart:typed_data';
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 
-import 'engine.dart';
+import 'package:dart_cuda/core/engine.dart';
 
 class Tensor {
   // final int M;

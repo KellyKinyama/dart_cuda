@@ -4,7 +4,7 @@ import 'dart:math';
 import 'package:bishop/bishop.dart';
 import 'package:dart_cuda/aft_transformer_decoder.dart';
 
-import '../gpu_tensor.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
 
 // --- CHESS UTILITIES ---
 

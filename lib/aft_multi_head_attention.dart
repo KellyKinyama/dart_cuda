@@ -1,8 +1,8 @@
 import 'package:dart_cuda/adam.dart';
 
-import 'aft.dart';
-import 'gpu_tensor.dart';
-import 'nn.dart';
+import 'package:dart_cuda/aft.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/nn.dart';
 
 class MultiHeadAFT extends Module {
   final List<AFTAttention> heads;

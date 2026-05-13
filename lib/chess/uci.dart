@@ -5,9 +5,9 @@ import 'dart:io';
 import 'package:bishop/bishop.dart';
 
 import 'package:dart_cuda/aft_transformer_decoder.dart';
-// import 'gpt_model2.dart';
-import '../network_utils.dart';
-import 'mcts.dart' as mc;
+// import 'package:dart_cuda/chess/gpt_model2.dart';
+import 'package:dart_cuda/network_utils.dart';
+import 'package:dart_cuda/chess/mcts.dart' as mc;
 
 class UciEngine {
   late Game game;

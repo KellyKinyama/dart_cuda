@@ -1,5 +1,5 @@
-import '../gpu_tensor.dart';
-import '../nn.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/nn.dart';
 
 class Conv2d {
   final int inChannels;

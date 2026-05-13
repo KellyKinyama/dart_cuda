@@ -1,5 +1,5 @@
-import '../aft_muzero_transformer_decoder.dart';
-import '../gpu_tensor.dart';
+import 'package:dart_cuda/aft_muzero_transformer_decoder.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
 
 class MuZeroGreedyAgent {
   final TransformerDecoder model;

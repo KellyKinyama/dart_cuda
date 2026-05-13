@@ -1,10 +1,10 @@
 // file: test_run_multimodal_gpu.dart
 
 import 'dart:math';
-import 'audio_transformer.dart';
-import 'video_transformer.dart';
-import 'gpu_tensor.dart';
-import 'adam.dart';
+import 'package:dart_cuda/audio_transformer.dart';
+import 'package:dart_cuda/video_transformer.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/adam.dart';
 
 void main() {
   final random = Random();

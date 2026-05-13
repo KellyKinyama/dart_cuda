@@ -1,4 +1,4 @@
-import '../gpu_tensor.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
 
 class SDG {
   final List<Tensor> params;

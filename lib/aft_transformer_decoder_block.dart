@@ -1,11 +1,11 @@
 import 'dart:math' as math;
-import 'adam.dart';
-import 'aft_multi_head_attention.dart';
-import 'aft_multi_head_cross_attention.dart';
-import 'feed_forward.dart';
-import 'gpu_tensor.dart';
-import 'layer_norm.dart';
-import 'nn.dart';
+import 'package:dart_cuda/adam.dart';
+import 'package:dart_cuda/aft_multi_head_attention.dart';
+import 'package:dart_cuda/aft_multi_head_cross_attention.dart';
+import 'package:dart_cuda/feed_forward.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/layer_norm.dart';
+import 'package:dart_cuda/nn.dart';
 
 class TransformerDecoderBlock extends Module {
   final MultiHeadAFT selfAttention;

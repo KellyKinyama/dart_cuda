@@ -14,7 +14,7 @@ import 'dart:math' as math;
 import 'package:dart_cuda/adam.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
 
-import 'deepseek_aft_decoder.dart';
+import 'package:dart_cuda/mu_zero/deepseek_aft_decoder.dart';
 
 /// Linear warmup followed by cosine decay to `minLR`.
 double warmupCosineLR(

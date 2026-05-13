@@ -1,7 +1,7 @@
-import 'gpu_tensor.dart';
-import 'aft_transformer_encoder_block.dart';
-import 'layer_norm.dart';
-import 'nn.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/aft_transformer_encoder_block.dart';
+import 'package:dart_cuda/layer_norm.dart';
+import 'package:dart_cuda/nn.dart';
 
 class TransformerEncoder extends Module {
   final int vocabSize;

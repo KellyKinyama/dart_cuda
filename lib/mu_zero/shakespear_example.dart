@@ -4,8 +4,8 @@ import 'package:dart_cuda/adam.dart';
 // import 'package:dart_cuda/aft_transformer_decoder.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
 // import 'package:dart_cuda/network_utils.dart';
-import '../aft_muzero_transformer_decoder.dart';
-import 'mu_zero_greedy_agent2.dart'; // Your refined Agent class
+import 'package:dart_cuda/aft_muzero_transformer_decoder.dart';
+import 'package:dart_cuda/mu_zero/mu_zero_greedy_agent2.dart'; // Your refined Agent class
 
 class CharTokenizer {
   late List<String> chars;

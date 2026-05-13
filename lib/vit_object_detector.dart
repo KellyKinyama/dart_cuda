@@ -1,6 +1,6 @@
-import 'gpu_tensor.dart';
-import 'nn.dart';
-import 'aft_vit_backbone.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/nn.dart';
+import 'package:dart_cuda/aft_vit_backbone.dart';
 
 class ViTObjectDetector extends Module {
   final ViTBackbone backbone;

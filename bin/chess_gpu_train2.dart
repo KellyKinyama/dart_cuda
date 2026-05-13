@@ -11,7 +11,7 @@ import 'dart:math' as math;
 import 'dart:math';
 import 'package:dart_cuda/adam.dart';
 import 'package:dart_cuda/aft_transformer_decoder.dart';
-import 'package:dart_cuda/dataset/dataset.dart';
+import 'package:dart_cuda/loaders/dataset.dart';
 import 'package:dart_cuda/gpu_tensor.dart';
 import 'package:dart_cuda/network_utils.dart';
 

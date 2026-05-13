@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'package:dart_cuda/adam.dart';
-import 'gpu_tensor.dart';
-import 'nn.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/nn.dart';
 
 class AFTAttention extends Module {
   final Layer queryLayer, keyLayer, valueLayer;

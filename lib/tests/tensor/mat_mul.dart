@@ -1,4 +1,4 @@
-import '../../gpu_tensor.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
 
 void main() {
   print("--- Starting Manual Autograd Verification ---");

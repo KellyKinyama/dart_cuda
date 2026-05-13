@@ -1,6 +1,6 @@
-import 'adam.dart';
-import 'gpu_tensor.dart';
-import 'mlp.dart';
+import 'package:dart_cuda/adam.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/mlp.dart';
 
 void main() {
   // 1. Setup Network

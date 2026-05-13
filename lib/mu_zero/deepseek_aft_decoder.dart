@@ -12,11 +12,11 @@
 
 import 'dart:math' as math;
 
-import '../aft_multi_head_attention.dart';
-import '../aft_multi_head_cross_attention.dart';
-import '../gpu_tensor.dart';
-import '../layer_norm.dart';
-import '../nn.dart';
+import 'package:dart_cuda/aft_multi_head_attention.dart';
+import 'package:dart_cuda/aft_multi_head_cross_attention.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/layer_norm.dart';
+import 'package:dart_cuda/nn.dart';
 
 /// A simple GELU-FFN expert: D -> H (GELU) -> D.
 class Expert extends Module {

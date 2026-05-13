@@ -1,8 +1,8 @@
 // lib/text_decoder.dart (New File)
-import 'gpu_tensor.dart';
-import 'layer_norm.dart';
-import 'nn.dart';
-import 'aft_text_decoder_block.dart'; // Your new file
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/layer_norm.dart';
+import 'package:dart_cuda/nn.dart';
+import 'package:dart_cuda/aft_text_decoder_block.dart'; // Your new file
 
 class TextDecoder extends Module {
   final int vocabSize;

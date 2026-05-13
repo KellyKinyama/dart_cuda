@@ -16,8 +16,8 @@ import 'dart:math' as math;
 
 import 'package:bishop/bishop.dart';
 
-import '../gpu_tensor.dart';
-import 'muzero_chess_player.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/mu_zero/muzero_chess_player.dart';
 
 /// A single node in the search tree. One node per *position* (Zobrist key),
 /// not per (parent, move) pair — transpositions share the same node.

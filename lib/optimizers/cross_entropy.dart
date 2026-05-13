@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 import 'package:test/test.dart';
 
-import '../gpu_tensor.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
 
 void main() {
   test('Cross Entropy Autograd - Numerical Gradient Check', () {

@@ -1,8 +1,8 @@
 // lib/aft_text_decoder_block.dart (New File)
-import 'aft.dart'; // AFTAttention
-import 'layer_norm.dart';
-import 'nn.dart';
-import 'gpu_tensor.dart';
+import 'package:dart_cuda/aft.dart'; // AFTAttention
+import 'package:dart_cuda/layer_norm.dart';
+import 'package:dart_cuda/nn.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
 
 class TextDecoderBlock extends Module {
   final AFTAttention selfAttention; // Masked Self-Attention

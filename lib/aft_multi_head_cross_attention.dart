@@ -1,7 +1,7 @@
-import 'adam.dart';
-import 'aft_cross_attention.dart';
-import 'gpu_tensor.dart';
-import 'nn.dart';
+import 'package:dart_cuda/adam.dart';
+import 'package:dart_cuda/aft_cross_attention.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/nn.dart';
 
 class MultiHeadAFTCross extends Module {
   final List<AFTCrossAttention> heads;

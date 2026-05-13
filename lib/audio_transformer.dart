@@ -1,6 +1,6 @@
-import 'gpu_tensor.dart';
-import 'nn.dart';
-import 'aft_transformer_encoder.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/nn.dart';
+import 'package:dart_cuda/aft_transformer_encoder.dart';
 
 class AudioTransformer extends Module {
   final int featureDim; // e.g., 40 (MFCCs)

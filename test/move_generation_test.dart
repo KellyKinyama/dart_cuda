@@ -69,9 +69,7 @@ void main() {
       const fen = '8/P7/8/8/8/8/8/k6K w - - 0 1';
       final g = Game(variant: Variant.standard(), fen: fen);
       final moves = g.generateLegalMoves();
-      final pawnMoves = moves.where(
-        (m) => g.toAlgebraic(m).startsWith('a7'),
-      );
+      final pawnMoves = moves.where((m) => g.toAlgebraic(m).startsWith('a7'));
       expect(pawnMoves.length, 4);
     });
   });

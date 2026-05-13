@@ -1,7 +1,7 @@
-import '../aft_muzero_transformer_decoder.dart';
-import '../gpu_tensor.dart';
-import '../adam.dart';
-import 'mu_zero_greedy_agent2.dart';
+import 'package:dart_cuda/aft_muzero_transformer_decoder.dart';
+import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/adam.dart';
+import 'package:dart_cuda/mu_zero/mu_zero_greedy_agent2.dart';
 
 void main() {
   print("--- MuZero-GPT: 'Quick Brown Fox' Stability Build ---");
