@@ -37,14 +37,22 @@ class ImageFolderLoader {
   late final List<String> classes;
   final List<_Sample> _train = [];
   final List<_Sample> _val = [];
+  // Per-class index lists into `_train` (for triplet sampling).
+  final List<List<int>> _trainByClass = [];
   final math.Random _rng;
 
   int get numClasses => classes.length;
   int get numTrain => _train.length;
   int get numVal => _val.length;
   int get patchPixels => patchSize * patchSize * 3;
-  int get numPatches =>
-      (imageSize ~/ patchSize) * (imageSize ~/ patchSize);
+  int get numPatches => (imageSize ~/ patchSize) * (imageSize ~/ patchSize);
+
+  /// Indices of train classes that have at least 2 samples (needed for
+  /// anchor+positive sampling).
+  List<int> get tripletReadyClasses => [
+    for (var c = 0; c < _trainByClass.length; c++)
+      if (_trainByClass[c].length >= 2) c,
+  ];
 
   ImageFolderLoader(
     this.rootPath, {
@@ -66,10 +74,7 @@ class ImageFolderLoader {
     }
 
     // Collect class directories (sorted for determinism).
-    final classDirs = root
-        .listSync()
-        .whereType<Directory>()
-        .toList()
+    final classDirs = root.listSync().whereType<Directory>().toList()
       ..sort((a, b) => a.path.compareTo(b.path));
     if (maxClasses != null && classDirs.length > maxClasses) {
       classDirs.removeRange(maxClasses, classDirs.length);
@@ -80,17 +85,10 @@ class ImageFolderLoader {
     for (var classIdx = 0; classIdx < classDirs.length; classIdx++) {
       final dir = classDirs[classIdx];
       final name = dir.path.split(Platform.pathSeparator).last;
-      final files = dir
-          .listSync()
-          .whereType<File>()
-          .where((f) {
-            final p = f.path.toLowerCase();
-            return p.endsWith('.jpg') ||
-                p.endsWith('.jpeg') ||
-                p.endsWith('.png');
-          })
-          .toList()
-        ..sort((a, b) => a.path.compareTo(b.path));
+      final files = dir.listSync().whereType<File>().where((f) {
+        final p = f.path.toLowerCase();
+        return p.endsWith('.jpg') || p.endsWith('.jpeg') || p.endsWith('.png');
+      }).toList()..sort((a, b) => a.path.compareTo(b.path));
       if (files.isEmpty) continue;
       final cap = files.length > maxPerClass ? maxPerClass : files.length;
       mutableClasses.add(name);
@@ -112,14 +110,26 @@ class ImageFolderLoader {
 
     // Replace the const empty `classes` list with the real one.
     classes = mutableClasses;
+
+    // Build per-class index lists for triplet sampling.
+    for (var c = 0; c < classes.length; c++) {
+      _trainByClass.add(<int>[]);
+    }
+    for (var i = 0; i < _train.length; i++) {
+      _trainByClass[_train[i].label].add(i);
+    }
   }
 
   Float32List? _decode(File file) {
     try {
       final raw = img.decodeImage(file.readAsBytesSync());
       if (raw == null) return null;
-      final resized = img.copyResize(raw,
-          width: imageSize, height: imageSize, interpolation: img.Interpolation.linear);
+      final resized = img.copyResize(
+        raw,
+        width: imageSize,
+        height: imageSize,
+        interpolation: img.Interpolation.linear,
+      );
       final flat = Float32List(imageSize * imageSize * 3);
       var i = 0;
       for (final p in resized) {
@@ -179,4 +189,43 @@ class ImageFolderLoader {
       yield MapEntry(patchify(s.flat), s.label);
     }
   }
+
+  /// Triplet of patchified images: (anchor, positive, negative). Anchor and
+  /// positive come from the same class; negative from a different class.
+  /// Throws `StateError` if fewer than two classes have >=2 samples each
+  /// (needed for valid triplet sampling).
+  ({Float32List anchor, Float32List positive, Float32List negative})
+  sampleTriplet() {
+    final ready = tripletReadyClasses;
+    if (ready.length < 2) {
+      throw StateError(
+        'Need >=2 classes with >=2 train samples each for triplets, '
+        'got ${ready.length}',
+      );
+    }
+    final aClass = ready[_rng.nextInt(ready.length)];
+    int nClass;
+    do {
+      nClass = ready[_rng.nextInt(ready.length)];
+    } while (nClass == aClass);
+
+    final aIdxList = _trainByClass[aClass];
+    final i1 = _rng.nextInt(aIdxList.length);
+    int i2;
+    do {
+      i2 = _rng.nextInt(aIdxList.length);
+    } while (i2 == i1);
+    final nIdxList = _trainByClass[nClass];
+    final i3 = _rng.nextInt(nIdxList.length);
+
+    return (
+      anchor: patchify(_train[aIdxList[i1]].flat),
+      positive: patchify(_train[aIdxList[i2]].flat),
+      negative: patchify(_train[nIdxList[i3]].flat),
+    );
+  }
+
+  /// Convenience: produce `n` independent triplets.
+  List<({Float32List anchor, Float32List positive, Float32List negative})>
+  sampleTriplets(int n) => [for (var i = 0; i < n; i++) sampleTriplet()];
 }

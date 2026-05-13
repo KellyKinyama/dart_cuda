@@ -130,7 +130,9 @@ Future<void> main(List<String> args) async {
     exit(1);
   }
   if (imgSize % patchSize != 0) {
-    stderr.writeln('error: imgSize ($imgSize) must be divisible by patchSize ($patchSize)');
+    stderr.writeln(
+      'error: imgSize ($imgSize) must be divisible by patchSize ($patchSize)',
+    );
     exit(2);
   }
 

@@ -200,3 +200,53 @@ Outputs:
 Flags: `--root --imgSize --patchSize --embed --layers --heads --batch
 --steps --lr --maxPerClass --maxClasses --valSplit --logEvery --valEvery
 --seed`.
+
+## Vision: face triplet metric learning
+
+Train face-style metric embeddings with `TripletLoss` on the same
+ImageFolder layout. Uses `ImageFolderLoader.sampleTriplet()` to pick
+(anchor, positive, negative) per step, the existing `ViTBackbone` as
+encoder, a `Linear(embed, outDim)` projection (no L2-norm: see note
+below), and `TripletLossGPU(margin)`.
+
+> **Engine limitation.** The current CUDA backward becomes unstable when
+> too many ViT forward passes accumulate into a single autograd graph.
+> Defaults are intentionally tiny so the demo runs to completion.
+> Increasing `--steps` or `--triplets` may segfault inside
+> `Tensor.backward`. Reduce them if that happens.
+
+Default safe run (1 layer, 1 triplet/step, 5 steps, ~10s):
+
+```bash
+dart run example/vision/train_face_triplet.dart
+```
+
+With explicit hyperparameters (still conservative):
+
+```bash
+dart run example/vision/train_face_triplet.dart \
+  --imgSize=32 --patchSize=8 --embed=32 --outDim=32 \
+  --layers=1 --heads=4 --triplets=1 --steps=5 \
+  --lr=1e-4 --margin=0.2 \
+  --maxPerClass=12 --maxClasses=6 \
+  --valSplit=0.25 --valPairs=60 --logEvery=1 --valEvery=5
+```
+
+Custom dataset:
+
+```bash
+dart run example/vision/train_face_triplet.dart \
+  --root=/path/to/faces \
+  --maxClasses=10 --maxPerClass=20
+```
+
+Outputs:
+- per-step triplet loss + EMA + count of "active" triplets
+  (loss > 0 = margin not yet satisfied)
+- periodic **verification accuracy** on random val pairs (mean L2 distance
+  for same-class vs different-class pairs, accuracy at the best L2
+  threshold)
+
+Flags: `--root --imgSize --patchSize --embed --outDim --layers --heads
+--triplets --steps --lr --margin --maxPerClass --maxClasses --valSplit
+--valPairs --logEvery --valEvery --seed`.
