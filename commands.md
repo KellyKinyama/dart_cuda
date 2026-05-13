@@ -89,3 +89,63 @@ dart run example/tool/muzero_vs_stockfish_train.dart example/tools/stockfish \
   --sf-movetime=300 --sf-skill=20 \
   --mcts-sims=3 --mcts-temp=1.0 \
   --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
+
+
+## MuZero overfit + next-move LM examples
+
+Both examples below auto-resolve the bundled Stockfish binary at
+`example/tools/stockfish` (override with `--stockfish=/path/to/stockfish`).
+Build it once with the recipe in the previous section.
+
+### 1. Overfit value head on the start position (Stockfish target)
+
+Sanity check that representation -> value head -> autograd -> Adam is wired:
+
+```bash
+dart run example/mu_zero/overfit_chess_value_startpos.dart
+```
+
+With explicit hyperparameters:
+
+```bash
+dart run example/mu_zero/overfit_chess_value_startpos.dart \
+  --epochs=300 --lr=0.05 --movetime=300 --tol=0.02
+```
+
+This now also overfits the **policy head** on Stockfish's `bestmove` for
+the start position (joint MSE + cross-entropy loss). Converges in ~10-30
+epochs.
+
+Flags: `--epochs --lr --movetime --tol --stockfish`.
+
+### 2. Train next-move policy from PGN dataset
+
+Bundled UCI dataset (default — `lib/loaders/dataset.dart`):
+
+```bash
+dart run example/mu_zero/train_next_move_pgn.dart
+```
+
+Quick smoke run:
+
+```bash
+dart run example/mu_zero/train_next_move_pgn.dart \
+  --games=10 --steps=100 --block=24 --embed=32 --layers=1 --heads=4 \
+  --logEvery=20 --valEvery=50 --sampleEvery=50 --valSplit=0.3
+```
+
+Real PGN file on disk (Lichess elite, TWIC, your own export, etc.):
+
+```bash
+dart run example/mu_zero/train_next_move_pgn.dart \
+  --pgn=path/to/games.pgn \
+  --games=500 --steps=5000 --block=64 --embed=128 --layers=2 --lr=5e-4
+```
+
+Outputs:
+- per-step train loss + EMA + token-level top-1 accuracy
+- periodic token-weighted **val loss + acc** on a held-out split
+- periodic **legal-move masked greedy continuation** from `<start>`
+
+Flags: `--pgn --games --steps --block --embed --layers --heads --lr
+--valSplit --logEvery --valEvery --sampleEvery --seed`.
