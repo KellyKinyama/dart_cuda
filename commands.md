@@ -149,3 +149,54 @@ Outputs:
 
 Flags: `--pgn --games --steps --block --embed --layers --heads --lr
 --valSplit --logEvery --valEvery --sampleEvery --seed`.
+
+
+## Vision: ViT image classifier
+
+Train a tiny ViT (existing `ViTBackbone` + a Linear classifier head) on
+any ImageFolder-style directory:
+
+```
+<root>/
+  <class_a>/  *.jpg|*.png
+  <class_b>/  *.jpg|*.png
+  ...
+```
+
+Default root is the bundled `Original Images/` celebrity dataset
+(31 classes, ~2.5k images).
+
+Quick smoke run (4 classes × 8 images, ~10s):
+
+```bash
+dart run example/vision/train_image_classifier.dart \
+  --imgSize=32 --patchSize=8 --embed=32 --layers=1 --heads=4 \
+  --batch=4 --steps=40 --maxPerClass=8 --maxClasses=4 \
+  --logEvery=10 --valEvery=20 --valSplit=0.25
+```
+
+Real run on 6 classes (~32s, val acc reaches 2× chance):
+
+```bash
+dart run example/vision/train_image_classifier.dart \
+  --imgSize=32 --patchSize=8 --embed=64 --layers=2 --heads=4 \
+  --batch=8 --steps=300 --maxPerClass=20 --maxClasses=6 --lr=1e-3 \
+  --logEvery=25 --valEvery=75 --valSplit=0.25
+```
+
+Custom dataset (point at any folder-of-folders):
+
+```bash
+dart run example/vision/train_image_classifier.dart \
+  --root=/path/to/my_dataset \
+  --imgSize=64 --patchSize=8 --embed=128 --layers=3 --batch=16 --steps=2000
+```
+
+Outputs:
+- per-step train loss + EMA + top-1 accuracy on the mini-batch
+- periodic **val loss + val acc** on the held-out split
+- final cleanup of all GPU tensors
+
+Flags: `--root --imgSize --patchSize --embed --layers --heads --batch
+--steps --lr --maxPerClass --maxClasses --valSplit --logEvery --valEvery
+--seed`.
