@@ -1,29 +1,32 @@
-// Overfit a `ChessMuZeroAgent`'s value head on a single training example:
-// the chess start position, with the target value coming from Stockfish.
+// Overfit a `ChessMuZeroAgent` on a single training example — the chess
+// start position — using BOTH heads simultaneously:
+//   * value head  -> Stockfish's eval (cp -> tanh(cp/600), white POV)
+//   * policy head -> Stockfish's best move (cross-entropy)
 //
 // Pipeline:
-//   1. Spawn the bundled `tools/stockfish` UCI binary.
-//   2. Ask it to evaluate the start position for `--movetime` ms.
-//   3. Convert centipawns/mate to a value in [-1, 1] (white POV) using
-//      tanh(cp/600) — same conversion the trainer uses.
-//   4. Build a tiny `ChessMuZeroAgent` (single-layer MoE decoder) with a
-//      one-token vocab (just the `<start>` token, since we never need a
-//      real move).
-//   5. Train (Adam, MSE) until the value head's prediction matches the
-//      Stockfish target — i.e. classical "overfit one example" sanity check
-//      that the model + autograd + optimizer all wire correctly.
+//   1. Spawn the bundled Stockfish UCI binary (looks in
+//      `example/tools/stockfish` then `tools/stockfish`, override with
+//      --stockfish=/path).
+//   2. Send `position startpos` + `go movetime`. Parse the final
+//      `info ... score cp|mate` line for the value AND the trailing
+//      `bestmove <uci>` line for the move.
+//   3. Build a tiny 3-token vocab (`<start>`, `<end>`, <bestmove>) and a
+//      tiny `ChessMuZeroAgent` (1-layer MoE AFT decoder, 16-d embed).
+//   4. Adam loop minimising
+//          L = MSE(value_pred, value_target)
+//            + CE(policy_logits, bestMoveId)
+//      until both heads are within tolerance of their targets.
 //
-// Usage (from repo root, after `nvcc` build + Stockfish present):
+// Usage (from repo root):
 //   dart run example/mu_zero/overfit_chess_value_startpos.dart
 //
-// Looks for the Stockfish binary in `example/tools/stockfish` first, then
-// `tools/stockfish` (legacy). Override with `--stockfish=/path/to/stockfish`.
-//
 // Optional flags:
-//   --epochs=N    (default 200)        max training epochs
+//   --epochs=N    (default 300)        max training epochs
 //   --lr=F        (default 0.05)       Adam learning rate
 //   --movetime=N  (default 500)        Stockfish movetime in ms
-//   --tol=F       (default 0.01)       early-stop |pred - target| tolerance
+//   --tol=F       (default 0.02)       early-stop |val - target| tolerance
+//                                      (policy must also be argmax==target)
+//   --stockfish=PATH                   override binary location
 
 import 'dart:async';
 import 'dart:convert';
@@ -58,9 +61,15 @@ double _cpToValue(int cp) {
   return (ep - en) / (ep + en);
 }
 
-/// Asks an already-running Stockfish process for its eval of the start
-/// position and returns the value from white's POV in [-1, 1].
-Future<double> _evalStartPosForWhite(
+class _SfStartposResult {
+  final double value; // [-1, 1] from white POV
+  final String bestMoveUci; // e.g. "e2e4"
+  _SfStartposResult(this.value, this.bestMoveUci);
+}
+
+/// Asks an already-running Stockfish process for its eval AND best move
+/// on the start position.
+Future<_SfStartposResult> _analyzeStartpos(
   Process sf,
   Stream<String> lines,
   int movetimeMs,
@@ -73,9 +82,13 @@ Future<double> _evalStartPosForWhite(
 
   int? lastCp;
   int? lastMate;
+  String? bestMove;
   final done = Completer<void>();
   final sub = lines.listen((line) {
     if (line.startsWith('bestmove')) {
+      // "bestmove e2e4 ponder ..."
+      final parts = line.split(RegExp(r'\s+'));
+      if (parts.length >= 2) bestMove = parts[1];
       if (!done.isCompleted) done.complete();
       return;
     }
@@ -99,9 +112,27 @@ Future<double> _evalStartPosForWhite(
   await done.future.timeout(Duration(milliseconds: movetimeMs * 5 + 5000));
   await sub.cancel();
 
-  if (lastMate != null) return lastMate! >= 0 ? 0.99 : -0.99;
-  if (lastCp != null) return _cpToValue(lastCp!);
-  return 0.0;
+  double value;
+  if (lastMate != null) {
+    value = lastMate! >= 0 ? 0.99 : -0.99;
+  } else if (lastCp != null) {
+    value = _cpToValue(lastCp!);
+  } else {
+    value = 0.0;
+  }
+  return _SfStartposResult(value, bestMove ?? '');
+}
+
+int _argmax(List<double> xs) {
+  var best = 0;
+  var bestV = xs[0];
+  for (var i = 1; i < xs.length; i++) {
+    if (xs[i] > bestV) {
+      bestV = xs[i];
+      best = i;
+    }
+  }
+  return best;
 }
 
 int _intFlag(List<String> args, String name, int fallback) {
@@ -123,10 +154,10 @@ double _doubleFlag(List<String> args, String name, double fallback) {
 }
 
 Future<void> main(List<String> args) async {
-  final epochs = _intFlag(args, 'epochs', 200);
+  final epochs = _intFlag(args, 'epochs', 300);
   final lr = _doubleFlag(args, 'lr', 0.05);
   final movetimeMs = _intFlag(args, 'movetime', 500);
-  final tol = _doubleFlag(args, 'tol', 0.01);
+  final tol = _doubleFlag(args, 'tol', 0.02);
 
   // ---- 1. Get target from Stockfish ----------------------------------------
   final sfPath = _resolveStockfish(args);
@@ -153,9 +184,16 @@ Future<void> main(List<String> args) async {
   sf.stdin.writeln('isready');
   await lines.firstWhere((l) => l.trim() == 'readyok');
 
-  print('🐟 Asking Stockfish for startpos eval (movetime=${movetimeMs}ms)...');
-  final target = await _evalStartPosForWhite(sf, lines, movetimeMs);
-  print('🎯 target value (white POV): ${target.toStringAsFixed(6)}');
+  print('🐟 Asking Stockfish about startpos (movetime=${movetimeMs}ms)...');
+  final sfResult = await _analyzeStartpos(sf, lines, movetimeMs);
+  final targetValue = sfResult.value;
+  final bestMoveUci = sfResult.bestMoveUci;
+  if (bestMoveUci.isEmpty) {
+    stderr.writeln('error: stockfish did not return a bestmove');
+    exit(2);
+  }
+  print('🎯 target value (white POV): ${targetValue.toStringAsFixed(6)}');
+  print('🎯 target bestmove        : $bestMoveUci');
 
   try {
     sf.stdin.writeln('quit');
@@ -164,8 +202,10 @@ Future<void> main(List<String> args) async {
   unawaited(sf.exitCode);
 
   // ---- 2. Build a tiny agent ----------------------------------------------
-  // Vocab is just the <start> sentinel; we always feed a 1-token sequence.
-  const vocabSize = 2; // <start> + one slot to keep matmul shapes happy
+  // 3-token vocab: <start>=0, <end>=1, <bestmove>=2.
+  const startId = 0;
+  const bestMoveId = 2;
+  const vocabSize = 3;
   const embedSize = 16;
   const blockSize = 4;
   final model = DeepSeekAFTDecoder(
@@ -182,46 +222,64 @@ Future<void> main(List<String> args) async {
   );
   final agent = ChessMuZeroAgent(model);
 
-  // Build the constant target tensor once. Shape [1, 1] matches the value
-  // head's per-row scalar output.
-  final targetTensor = Tensor.fromList([1, 1], [target]);
+  // Constant value target tensor, shape [1, 1] to match value head output.
+  final valueTargetTensor = Tensor.fromList([1, 1], [targetValue]);
 
   final params = agent.parameters();
   final opt = Adam(params, lr: lr);
 
   print(
-    '🚀 Overfitting value head on startpos (epochs=$epochs, lr=$lr, tol=$tol)',
+    '🚀 Joint overfit (value+policy) on startpos '
+    '(epochs=$epochs, lr=$lr, tol=$tol)',
   );
 
-  double finalPred = double.nan;
-  double finalLoss = double.nan;
+  double finalPredV = double.nan;
+  double finalLossV = double.nan;
+  double finalLossP = double.nan;
+  int finalArgmax = -1;
   for (var epoch = 1; epoch <= epochs; epoch++) {
     opt.zeroGrad();
     final tracker = <Tensor>[];
 
     // h(start) -> [1, embedSize]
-    final state = agent.representation([0], tracker);
+    final state = agent.representation([startId], tracker);
 
     // f_value(state) -> [1, 1] in (-1, 1)
     final valuePred = agent.predictValue(state, tracker);
 
-    // MSE: (pred - target)^2  (already a 1x1 tensor, no reduce needed)
-    final diff = valuePred - targetTensor;
-    final loss = diff.pow(2.0);
-    tracker.addAll([diff, loss]);
+    // f_policy(state) -> [1, vocabSize]
+    final policyLogits = agent.predictPolicy(state, tracker);
+
+    // Value loss: MSE on the 1x1 scalar tensor.
+    final vDiff = valuePred - valueTargetTensor;
+    final vLoss = vDiff.pow(2.0);
+
+    // Policy loss: CE against the bestmove token id.
+    final pLoss = policyLogits.crossEntropy(const [bestMoveId]);
+
+    // Joint loss.
+    final loss = vLoss + pLoss;
+    tracker.addAll([vDiff, vLoss, pLoss, loss]);
 
     loss.backward();
     opt.step();
 
-    finalPred = valuePred.fetchData()[0];
-    finalLoss = loss.fetchData()[0];
+    finalPredV = valuePred.fetchData()[0];
+    finalLossV = vLoss.fetchData()[0];
+    finalLossP = pLoss.fetchData()[0];
+    finalArgmax = _argmax(policyLogits.fetchData());
 
-    if (epoch == 1 || epoch % 10 == 0 || finalLoss.abs() < tol * tol) {
+    final policyOk = finalArgmax == bestMoveId;
+    final valueOk = (finalPredV - targetValue).abs() < tol;
+
+    if (epoch == 1 || epoch % 10 == 0 || (policyOk && valueOk)) {
       print(
         '  epoch ${epoch.toString().padLeft(4)} | '
-        'pred=${finalPred.toStringAsFixed(6)} | '
-        'target=${target.toStringAsFixed(6)} | '
-        'loss=${finalLoss.toStringAsExponential(3)}',
+        'v_pred=${finalPredV.toStringAsFixed(4)} '
+        '(tgt=${targetValue.toStringAsFixed(4)}) | '
+        'v_loss=${finalLossV.toStringAsExponential(2)} | '
+        'p_loss=${finalLossP.toStringAsExponential(2)} | '
+        'argmax=$finalArgmax${policyOk ? "\u2713" : ""}',
       );
     }
 
@@ -229,20 +287,27 @@ Future<void> main(List<String> args) async {
       t.dispose();
     }
 
-    if ((finalPred - target).abs() < tol) {
-      print('✅ converged within tol=$tol at epoch $epoch');
+    if (policyOk && valueOk) {
+      print(
+        '\u2705 both heads converged at epoch $epoch '
+        '(policy argmax=bestmove, |v_err|<$tol)',
+      );
       break;
     }
   }
 
   print(
-    '\nFinal: pred=${finalPred.toStringAsFixed(6)}, '
-    'target=${target.toStringAsFixed(6)}, '
-    '|err|=${(finalPred - target).abs().toStringAsExponential(3)}',
+    '\nFinal:\n'
+    '  value : pred=${finalPredV.toStringAsFixed(6)}, '
+    'target=${targetValue.toStringAsFixed(6)}, '
+    '|err|=${(finalPredV - targetValue).abs().toStringAsExponential(3)}\n'
+    '  policy: argmax=$finalArgmax, target=$bestMoveId '
+    '(${finalArgmax == bestMoveId ? "match" : "mismatch"}), '
+    'CE=${finalLossP.toStringAsExponential(3)}',
   );
 
   // Cleanup
-  targetTensor.dispose();
+  valueTargetTensor.dispose();
   opt.dispose();
   for (final p in params) {
     p.dispose();
