@@ -67,7 +67,7 @@ example/                  # Runnable demos & training scripts
 ├── mlp_learn.dart
 └── …
 
-tool/                     # Build / training orchestration scripts
+example/tool/                     # Build / training orchestration scripts
 test/                     # `dart test` suite
 test/scratch/             # ad-hoc tensor sanity checks
 ```
