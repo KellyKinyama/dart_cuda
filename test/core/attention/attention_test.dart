@@ -130,10 +130,7 @@ void main() {
     });
 
     test('asserts when embedSize is not divisible by numHeads', () {
-      expect(
-        () => MultiHeadAFT(3, 16, 8),
-        throwsA(isA<AssertionError>()),
-      );
+      expect(() => MultiHeadAFT(3, 16, 8), throwsA(isA<AssertionError>()));
     });
   });
 
@@ -179,13 +176,7 @@ void main() {
       const encEmbed = 32;
       const tDec = 5;
       const tEnc = 9;
-      final cross = MultiHeadAFTCross(
-        heads,
-        decEmbed,
-        encEmbed,
-        tDec,
-        tEnc,
-      );
+      final cross = MultiHeadAFTCross(heads, decEmbed, encEmbed, tDec, tEnc);
 
       final xDec = Tensor.random([tDec, decEmbed]);
       final xEnc = Tensor.random([tEnc, encEmbed]);

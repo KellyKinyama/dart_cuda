@@ -67,60 +67,64 @@ void main() {
       expect(p.grad, everyElement(closeTo(0.0, 1e-9)));
     });
 
-    test('step increments t and updates parameters in the gradient direction',
-        () {
-      final p = Tensor.fromList([1, 2], [10.0, -5.0]);
-      final loss = p.sum(); // grad = [1, 1]
-      loss.backward();
-      addTearDown(() {
-        loss.dispose();
-        p.dispose();
-      });
-
-      final before = List<double>.from(p.data);
-      final opt = Adam([p], lr: 0.1);
-      addTearDown(opt.dispose);
-
-      expect(opt.t, equals(0));
-      opt.step();
-      expect(opt.t, equals(1));
-
-      final after = p.data;
-      // With grad=+1 and lr=0.1, Adam's first step is approximately
-      // p ← p - lr (because m_hat == v_hat-normalized → 1).
-      expect(after[0], lessThan(before[0]));
-      expect(after[1], lessThan(before[1]));
-      // Magnitude of update should be close to lr on the first step.
-      expect((before[0] - after[0]).abs(), closeTo(0.1, 0.05));
-    });
-
-    test('repeated steps drive a parameter toward zero on a quadratic loss',
-        () {
-      // Loss = sum(p^2), grad = 2p. Optimum at p = 0.
-      final p = Tensor.fromList([1, 3], [1.0, -2.0, 0.5]);
-      final opt = Adam([p], lr: 0.1);
-      addTearDown(() {
-        opt.dispose();
-        p.dispose();
-      });
-
-      double normSq() => p.data.fold(0.0, (s, v) => s + v * v);
-      final initial = normSq();
-
-      for (var i = 0; i < 50; i++) {
-        opt.zeroGrad();
-        final sq = p.pow(2.0);
-        final loss = sq.sum();
+    test(
+      'step increments t and updates parameters in the gradient direction',
+      () {
+        final p = Tensor.fromList([1, 2], [10.0, -5.0]);
+        final loss = p.sum(); // grad = [1, 1]
         loss.backward();
-        opt.step();
-        sq.dispose();
-        loss.dispose();
-      }
+        addTearDown(() {
+          loss.dispose();
+          p.dispose();
+        });
 
-      final finalNorm = normSq();
-      expect(finalNorm, lessThan(initial));
-      expect(finalNorm, lessThan(0.5));
-    });
+        final before = List<double>.from(p.data);
+        final opt = Adam([p], lr: 0.1);
+        addTearDown(opt.dispose);
+
+        expect(opt.t, equals(0));
+        opt.step();
+        expect(opt.t, equals(1));
+
+        final after = p.data;
+        // With grad=+1 and lr=0.1, Adam's first step is approximately
+        // p ← p - lr (because m_hat == v_hat-normalized → 1).
+        expect(after[0], lessThan(before[0]));
+        expect(after[1], lessThan(before[1]));
+        // Magnitude of update should be close to lr on the first step.
+        expect((before[0] - after[0]).abs(), closeTo(0.1, 0.05));
+      },
+    );
+
+    test(
+      'repeated steps drive a parameter toward zero on a quadratic loss',
+      () {
+        // Loss = sum(p^2), grad = 2p. Optimum at p = 0.
+        final p = Tensor.fromList([1, 3], [1.0, -2.0, 0.5]);
+        final opt = Adam([p], lr: 0.1);
+        addTearDown(() {
+          opt.dispose();
+          p.dispose();
+        });
+
+        double normSq() => p.data.fold(0.0, (s, v) => s + v * v);
+        final initial = normSq();
+
+        for (var i = 0; i < 50; i++) {
+          opt.zeroGrad();
+          final sq = p.pow(2.0);
+          final loss = sq.sum();
+          loss.backward();
+          opt.step();
+          sq.dispose();
+          loss.dispose();
+        }
+
+        final finalNorm = normSq();
+        expect(finalNorm, lessThan(initial));
+        expect(finalNorm, lessThan(0.5));
+      },
+    );
 
     test('dispose clears m and v buffers', () {
       final p = Tensor.fill([2, 2], 0.0);

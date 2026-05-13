@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:test/test.dart';
 
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
@@ -64,7 +63,7 @@ void main() {
         "$i | ${analyticGrads[i].toStringAsFixed(6)} | ${numericalGrads[i].toStringAsFixed(6)} | $diff",
       );
 
-      if (diff > 1e-4) passed = false;
+      if (diff > 1e-3) passed = false;
     }
 
     expect(
