@@ -32,7 +32,7 @@ void main() {
   const N = 4;
 
   // 2. Load the compiled .so library from the current directory.
-  final dylib = DynamicLibrary.open('./libmatmul.so');
+  final dylib = DynamicLibrary.open('native/lib/libmatmul.so');
 
   // 3. Look up the function by its C name.
   final matMulCuda = dylib.lookupFunction<MatMulFunc, MatMul>(

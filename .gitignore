@@ -15,3 +15,8 @@ tools/stockfish.tar
 tools/stockfish.zip
 tools/sf/
 output.log
+
+# Compiled native libraries
+native/lib/*.so
+native/lib/*.dll
+native/lib/*.dylib

@@ -1,10 +1,10 @@
-nvcc --shared -o libmat_mul.so engine.cu -Xcompiler -fPIC
+nvcc --shared -o native/lib/libmat_mul.so native/src/engine.cu -Xcompiler -fPIC
 
-nvcc --shared -o dart_cuda.so dart_cuda.cu -Xcompiler -fPIC
+nvcc --shared -o native/lib/dart_cuda.so native/src/dart_cuda.cu -Xcompiler -fPIC
 
 
 
-nvcc --shared -o libmat_mul.so engine_v2.cu -Xcompiler -fPIC
+nvcc --shared -o native/lib/libmat_mul.so native/src/engine_v2.cu -Xcompiler -fPIC
 
 
 ## MuZero chess

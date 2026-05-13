@@ -279,7 +279,7 @@ class CudaEngine {
   late _D_im2col col2im;
 
   CudaEngine() {
-    _lib = ffi.DynamicLibrary.open('${Directory.current.path}/libmat_mul.so');
+    _lib = ffi.DynamicLibrary.open('${Directory.current.path}/native/lib/libmat_mul.so');
     createTensor = _lib.lookupFunction<_C_create, _D_create>('create_tensor');
     destroyTensor = _lib.lookupFunction<_C_destroy, _D_destroy>(
       'destroy_tensor',

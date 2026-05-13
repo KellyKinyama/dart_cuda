@@ -30,7 +30,7 @@ class CudaEngine {
   late final matMulCuda;
 
   CudaEngine() {
-    final DynamicLibrary _lib = DynamicLibrary.open('./dart_cuda.so');
+    final DynamicLibrary _lib = DynamicLibrary.open('native/lib/dart_cuda.so');
     matMulCuda = _lib.lookupFunction<MatMulFunc, MatMul>(
       'matrix_multiply_cuda',
     );
