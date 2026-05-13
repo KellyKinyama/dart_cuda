@@ -516,9 +516,11 @@ class Tensor {
 
       return Tensor._raw(opFunc(_handle, other._handle), shape);
     } else if (other is num) {
-      // Create a temporary 1x1 tensor for the scalar value
-      final tempScalar = Tensor.fill([1], other.toDouble());
+      // Build a same-shape constant tensor so the elementwise CUDA kernels
+      // (which do not broadcast across rank) line up 1:1 with `this`.
+      final tempScalar = Tensor.fill(shape, other.toDouble());
       final resultHandle = opFunc(_handle, tempScalar.handle);
+      tempScalar.dispose();
       return Tensor._raw(resultHandle, shape);
     }
     throw ArgumentError(

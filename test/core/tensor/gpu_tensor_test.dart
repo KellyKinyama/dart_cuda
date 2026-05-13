@@ -129,22 +129,38 @@ void main() {
       expect(c.data, closeToList([5, 5, 6]));
     });
 
-    test(
-      'division by scalar',
-      () {
-        final a = Tensor.fromList([1, 3], [10, 20, 30]);
-        final c = a / 10.0;
-        addTearDown(() {
-          a.dispose();
-          c.dispose();
-        });
+    test('division by scalar', () {
+      final a = Tensor.fromList([1, 3], [10, 20, 30]);
+      final c = a / 10.0;
+      addTearDown(() {
+        a.dispose();
+        c.dispose();
+      });
 
-        expect(c.data, closeToList([1, 2, 3]));
-      },
-      // Known issue: scalar `/` lowers to `* Tensor.fill([1], 1/x)` which
-      // the CUDA `mul_tensors` kernel does not broadcast across rank-2.
-      skip: 'scalar broadcast not yet supported by mul_tensors kernel',
-    );
+      expect(c.data, closeToList([1, 2, 3]));
+    });
+
+    test('multiplication by scalar', () {
+      final a = Tensor.fromList([1, 3], [1, 2, 3]);
+      final c = a * 4.0;
+      addTearDown(() {
+        a.dispose();
+        c.dispose();
+      });
+
+      expect(c.data, closeToList([4, 8, 12]));
+    });
+
+    test('addition of scalar', () {
+      final a = Tensor.fromList([1, 3], [1, 2, 3]);
+      final c = a + 10.0;
+      addTearDown(() {
+        a.dispose();
+        c.dispose();
+      });
+
+      expect(c.data, closeToList([11, 12, 13]));
+    });
 
     test('division by zero scalar throws', () {
       final a = Tensor.fromList([1, 1], [1.0]);
@@ -210,8 +226,7 @@ void main() {
         y.dispose();
       });
 
-      final expected =
-          values.map((v) => 1.0 / (1.0 + math.exp(-v))).toList();
+      final expected = values.map((v) => 1.0 / (1.0 + math.exp(-v))).toList();
       expect(y.data, closeToList(expected));
     });
 
@@ -226,11 +241,13 @@ void main() {
 
       expect(
         y.data,
-        closeToList(values.map((v) {
-          final ep = math.exp(v);
-          final en = math.exp(-v);
-          return (ep - en) / (ep + en);
-        }).toList()),
+        closeToList(
+          values.map((v) {
+            final ep = math.exp(v);
+            final en = math.exp(-v);
+            return (ep - en) / (ep + en);
+          }).toList(),
+        ),
       );
     });
 
