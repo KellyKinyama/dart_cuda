@@ -256,6 +256,7 @@ class CudaEngine {
   late _D_aft aftForward;
   late _D_aft_cross aftCrossForward;
   late _D_concat concatTensors;
+  late _D_concat concatTensorsAxis0;
   late _D_layernorm layernormForward;
   late _D_op1 geluTensor;
   late _D_embedding embeddingForward;
@@ -307,6 +308,9 @@ class CudaEngine {
     );
     concatTensors = _lib.lookupFunction<_C_concat, _D_concat>(
       'concat_tensors_gpu',
+    );
+    concatTensorsAxis0 = _lib.lookupFunction<_C_concat, _D_concat>(
+      'concat_tensors_axis0_gpu',
     );
 
     layernormForward = _lib.lookupFunction<_C_layernorm, _D_layernorm>(
@@ -655,6 +659,29 @@ class Tensor {
       tensors[0].shape[0],
       tensors[0].shape[1] * tensors.length,
     ]);
+  }
+
+  /// Concatenates rank-2 tensors along axis 0 (rows). All inputs must share
+  /// the same number of columns. Result shape: `[sum(rows_i), cols]`.
+  static Tensor concatAxis0(List<Tensor> tensors) {
+    assert(tensors.isNotEmpty, 'concatAxis0 needs at least one tensor');
+    final cols = tensors[0].shape[1];
+    var totalRows = 0;
+    for (final t in tensors) {
+      assert(t.shape.length == 2, 'concatAxis0 expects rank-2 tensors');
+      assert(
+        t.shape[1] == cols,
+        'concatAxis0 requires equal column counts (got ${t.shape[1]} vs $cols)',
+      );
+      totalRows += t.shape[0];
+    }
+    final ptr = calloc<ffi.Pointer<ffi.Void>>(tensors.length);
+    for (int i = 0; i < tensors.length; i++) {
+      ptr[i] = tensors[i]._handle;
+    }
+    final h = engine.concatTensorsAxis0(ptr, tensors.length);
+    calloc.free(ptr);
+    return Tensor._raw(h, [totalRows, cols]);
   }
 
   // In Tensor class

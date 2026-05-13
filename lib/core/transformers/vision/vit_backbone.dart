@@ -55,7 +55,7 @@ class ViTBackbone extends Module {
 
     // 2. Prepend CLS Token
     // Result shape: [numPatches + 1, embedSize]
-    final xSeq = Tensor.concat([clsToken, xPatches]);
+    final xSeq = Tensor.concatAxis0([clsToken, xPatches]);
     tracker.add(xSeq);
 
     // 3. Add Positional Embeddings

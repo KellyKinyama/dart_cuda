@@ -79,35 +79,37 @@ void main() {
   });
 
   group('VideoTransformer', () {
-    test('returns [1, numClasses] logits when frame embeds need projection',
-        () {
-      const frameDim = 12;
-      const embed = 16;
-      const maxLen = 10;
-      const classes = 5;
-      const numFrames = 4;
+    test(
+      'returns [1, numClasses] logits when frame embeds need projection',
+      () {
+        const frameDim = 12;
+        const embed = 16;
+        const maxLen = 10;
+        const classes = 5;
+        const numFrames = 4;
 
-      final video = VideoTransformer(
-        frameEmbedDim: frameDim,
-        embedSize: embed,
-        maxVideoSequenceLength: maxLen,
-        numClasses: classes,
-        numLayers: 1,
-        numHeads: 4,
-      );
-      final frames = Tensor.random([numFrames, frameDim], scale: 0.1);
-      final tracker = <Tensor>[];
+        final video = VideoTransformer(
+          frameEmbedDim: frameDim,
+          embedSize: embed,
+          maxVideoSequenceLength: maxLen,
+          numClasses: classes,
+          numLayers: 1,
+          numHeads: 4,
+        );
+        final frames = Tensor.random([numFrames, frameDim], scale: 0.1);
+        final tracker = <Tensor>[];
 
-      final logits = video.forward(frames, tracker);
-      addTearDown(() {
-        frames.dispose();
-        disposeAll(tracker);
-        disposeAll(video.parameters());
-      });
+        final logits = video.forward(frames, tracker);
+        addTearDown(() {
+          frames.dispose();
+          disposeAll(tracker);
+          disposeAll(video.parameters());
+        });
 
-      expect(logits.shape, equals([1, classes]));
-      expect(_allFinite(logits.fetchData()), isTrue);
-    });
+        expect(logits.shape, equals([1, classes]));
+        expect(_allFinite(logits.fetchData()), isTrue);
+      },
+    );
 
     test('throws when video exceeds maxVideoSequenceLength', () {
       final video = VideoTransformer(
@@ -124,10 +126,7 @@ void main() {
         disposeAll(video.parameters());
       });
 
-      expect(
-        () => video.forward(frames, <Tensor>[]),
-        throwsArgumentError,
-      );
+      expect(() => video.forward(frames, <Tensor>[]), throwsArgumentError);
     });
   });
 

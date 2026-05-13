@@ -689,6 +689,45 @@ __global__ void concat_axis1_fwd(float **inputs, float *out, int num_tensors, in
     }
 }
 
+// Axis-0 concat: copies each input row-block sequentially.
+// Inputs are [rows_i, cols] all sharing the same `cols`.
+// `row_offsets` has length num_tensors + 1; row_offsets[k] = sum(rows_0..rows_{k-1}),
+// row_offsets[num_tensors] = total_rows.
+__global__ void concat_axis0_fwd(float **inputs, float *out, int num_tensors,
+                                 const int *row_offsets, int cols)
+{
+    int total_rows = row_offsets[num_tensors];
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int size = total_rows * cols;
+    if (i >= size) return;
+
+    int r = i / cols;
+    int c = i % cols;
+
+    // Find which input row r belongs to (linear scan; num_tensors is small).
+    int t = 0;
+    while (t + 1 < num_tensors && r >= row_offsets[t + 1]) t++;
+    int local_r = r - row_offsets[t];
+    out[i] = inputs[t][local_r * cols + c];
+}
+
+__global__ void concat_axis0_bwd(float *grad_out, float **grad_inputs, int num_tensors,
+                                 const int *row_offsets, int cols)
+{
+    int total_rows = row_offsets[num_tensors];
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int size = total_rows * cols;
+    if (i >= size) return;
+
+    int r = i / cols;
+    int c = i % cols;
+
+    int t = 0;
+    while (t + 1 < num_tensors && r >= row_offsets[t + 1]) t++;
+    int local_r = r - row_offsets[t];
+    atomicAdd(&grad_inputs[t][local_r * cols + c], grad_out[i]);
+}
+
 __global__ void concat_axis1_bwd(float *grad_out, float **grad_inputs, int num_tensors, int rows, int cols_per_tensor)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1758,6 +1797,55 @@ extern "C"
 
             concat_axis1_bwd<<<(out->size + 255) / 256, 256>>>(out->grad_gpu, d_grads, num_tensors, rows, cols_per_t);
             cudaFree(d_grads);
+        };
+
+        out->_children = ts;
+        return (void *)out;
+    }
+
+    DLLEXPORT void *concat_tensors_axis0_gpu(void **handles, int num_tensors)
+    {
+        std::vector<Tensor *> ts;
+        for (int i = 0; i < num_tensors; i++)
+            ts.push_back((Tensor *)handles[i]);
+
+        int cols = ts[0]->cols;
+        int total_rows = 0;
+        std::vector<int> h_offsets(num_tensors + 1, 0);
+        for (int i = 0; i < num_tensors; i++)
+        {
+            h_offsets[i] = total_rows;
+            total_rows += ts[i]->rows;
+        }
+        h_offsets[num_tensors] = total_rows;
+
+        Tensor *out = new Tensor(total_rows, cols);
+
+        // Device pointer arrays.
+        float **d_inputs;
+        std::vector<float *> h_inputs(num_tensors);
+        for (int i = 0; i < num_tensors; i++) h_inputs[i] = ts[i]->data_gpu;
+        cudaMalloc(&d_inputs, num_tensors * sizeof(float *));
+        cudaMemcpy(d_inputs, h_inputs.data(), num_tensors * sizeof(float *), cudaMemcpyHostToDevice);
+
+        int *d_offsets;
+        cudaMalloc(&d_offsets, (num_tensors + 1) * sizeof(int));
+        cudaMemcpy(d_offsets, h_offsets.data(), (num_tensors + 1) * sizeof(int), cudaMemcpyHostToDevice);
+
+        concat_axis0_fwd<<<(out->size + 255) / 256, 256>>>(d_inputs, out->data_gpu, num_tensors, d_offsets, cols);
+        cudaFree(d_inputs);
+
+        out->_backward = [out, ts, num_tensors, cols, d_offsets]()
+        {
+            float **d_grads;
+            std::vector<float *> h_grads(num_tensors);
+            for (int i = 0; i < num_tensors; i++) h_grads[i] = ts[i]->grad_gpu;
+            cudaMalloc(&d_grads, num_tensors * sizeof(float *));
+            cudaMemcpy(d_grads, h_grads.data(), num_tensors * sizeof(float *), cudaMemcpyHostToDevice);
+
+            concat_axis0_bwd<<<(out->size + 255) / 256, 256>>>(out->grad_gpu, d_grads, num_tensors, d_offsets, cols);
+            cudaFree(d_grads);
+            cudaFree(d_offsets);
         };
 
         out->_children = ts;

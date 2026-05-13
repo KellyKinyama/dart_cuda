@@ -356,6 +356,37 @@ void main() {
       expect(v.handle, equals(x.handle));
       expect(v.data, closeToList([1, 2, 3, 4, 5, 6]));
     });
+
+    test('concatAxis0 stacks rank-2 tensors row-wise', () {
+      final a = Tensor.fromList([1, 3], [1, 2, 3]);
+      final b = Tensor.fromList([2, 3], [4, 5, 6, 7, 8, 9]);
+      final c = Tensor.concatAxis0([a, b]);
+      addTearDown(() {
+        a.dispose();
+        b.dispose();
+        c.dispose();
+      });
+
+      expect(c.shape, equals([3, 3]));
+      expect(c.data, closeToList([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+    });
+
+    test('concatAxis0 propagates gradients to every input', () {
+      final a = Tensor.fromList([1, 2], [1, 2]);
+      final b = Tensor.fromList([2, 2], [3, 4, 5, 6]);
+      final c = Tensor.concatAxis0([a, b]);
+      final loss = c.sum();
+      loss.backward();
+      addTearDown(() {
+        a.dispose();
+        b.dispose();
+        c.dispose();
+        loss.dispose();
+      });
+
+      expect(a.grad, closeToList([1, 1]));
+      expect(b.grad, closeToList([1, 1, 1, 1]));
+    });
   });
 
   group('Tensor — autograd', () {

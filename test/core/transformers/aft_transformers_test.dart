@@ -76,24 +76,23 @@ void main() {
       expect(_allFinite(y.fetchData()), isTrue);
     });
 
-    test('parameters() aggregates self+cross attention, ffn, 3× layer-norm',
-        () {
-      const embed = 16;
-      const heads = 4;
-      const encEmbed = 24;
-      const seq = 5;
-      final block = TransformerDecoderBlock(embed, heads, encEmbed, seq);
-      addTearDown(() => disposeAll(block.parameters()));
+    test(
+      'parameters() aggregates self+cross attention, ffn, 3× layer-norm',
+      () {
+        const embed = 16;
+        const heads = 4;
+        const encEmbed = 24;
+        const seq = 5;
+        final block = TransformerDecoderBlock(embed, heads, encEmbed, seq);
+        addTearDown(() => disposeAll(block.parameters()));
 
-      // self-attn MultiHeadAFT: heads*7 + 2.
-      // cross-attn MultiHeadAFTCross: heads*7 + 2.
-      // FeedForward (D→4D→D, 2 Layers): 4.
-      // ln1+ln2+ln3: 3*2 = 6.
-      expect(
-        block.parameters(),
-        hasLength((heads * 7 + 2) * 2 + 4 + 6),
-      );
-    });
+        // self-attn MultiHeadAFT: heads*7 + 2.
+        // cross-attn MultiHeadAFTCross: heads*7 + 2.
+        // FeedForward (D→4D→D, 2 Layers): 4.
+        // ln1+ln2+ln3: 3*2 = 6.
+        expect(block.parameters(), hasLength((heads * 7 + 2) * 2 + 4 + 6));
+      },
+    );
   });
 
   group('TextDecoderBlock', () {
