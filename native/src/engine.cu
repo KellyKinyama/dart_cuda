@@ -1497,6 +1497,127 @@ extern "C"
     }
 
     // Op wrappers...
+
+    // ---------------------------------------------------------------------
+    // Scalar-broadcast elementwise ops: A is [n], B is a single scalar tensor
+    // (size 1). Output has shape == A's shape. Backward accumulates B's grad
+    // via atomicAdd into B->grad_gpu[0].
+    // ---------------------------------------------------------------------
+    __global__ void add_scalar_fwd_k(const float *a, const float *b, float *out, int n)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) out[i] = a[i] + b[0];
+    }
+    __global__ void add_scalar_bwd_k(const float *gout, float *ga, float *gb, int n)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) {
+            ga[i] += gout[i];
+            atomicAdd(&gb[0], gout[i]);
+        }
+    }
+    __global__ void sub_scalar_fwd_k(const float *a, const float *b, float *out, int n)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) out[i] = a[i] - b[0];
+    }
+    __global__ void sub_scalar_bwd_k(const float *gout, float *ga, float *gb, int n)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) {
+            ga[i] += gout[i];
+            atomicAdd(&gb[0], -gout[i]);
+        }
+    }
+    __global__ void mul_scalar_fwd_k(const float *a, const float *b, float *out, int n)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) out[i] = a[i] * b[0];
+    }
+    __global__ void mul_scalar_bwd_k(const float *a, const float *b, const float *gout,
+                                     float *ga, float *gb, int n)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) {
+            ga[i] += b[0] * gout[i];
+            atomicAdd(&gb[0], a[i] * gout[i]);
+        }
+    }
+    __global__ void div_scalar_fwd_k(const float *a, const float *b, float *out, int n)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) out[i] = a[i] / b[0];
+    }
+    __global__ void div_scalar_bwd_k(const float *a, const float *b, const float *gout,
+                                     float *ga, float *gb, int n)
+    {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        if (i < n) {
+            float bv = b[0];
+            ga[i] += gout[i] / bv;
+            atomicAdd(&gb[0], -a[i] * gout[i] / (bv * bv));
+        }
+    }
+
+    DLLEXPORT void *add_tensor_scalar(void *ah, void *bh)
+    {
+        Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
+        Tensor *out = new Tensor(a->rows, a->cols);
+        out->_children = {a, b};
+        int n = a->size;
+        int blocks = (n + 255) / 256;
+        add_scalar_fwd_k<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, n);
+        out->_backward = [out, a, b, n, blocks]()
+        {
+            add_scalar_bwd_k<<<blocks, 256>>>(out->grad_gpu, a->grad_gpu, b->grad_gpu, n);
+        };
+        return (void *)out;
+    }
+    DLLEXPORT void *sub_tensor_scalar(void *ah, void *bh)
+    {
+        Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
+        Tensor *out = new Tensor(a->rows, a->cols);
+        out->_children = {a, b};
+        int n = a->size;
+        int blocks = (n + 255) / 256;
+        sub_scalar_fwd_k<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, n);
+        out->_backward = [out, a, b, n, blocks]()
+        {
+            sub_scalar_bwd_k<<<blocks, 256>>>(out->grad_gpu, a->grad_gpu, b->grad_gpu, n);
+        };
+        return (void *)out;
+    }
+    DLLEXPORT void *mul_tensor_scalar(void *ah, void *bh)
+    {
+        Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
+        Tensor *out = new Tensor(a->rows, a->cols);
+        out->_children = {a, b};
+        int n = a->size;
+        int blocks = (n + 255) / 256;
+        mul_scalar_fwd_k<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, n);
+        out->_backward = [out, a, b, n, blocks]()
+        {
+            mul_scalar_bwd_k<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->grad_gpu,
+                                              a->grad_gpu, b->grad_gpu, n);
+        };
+        return (void *)out;
+    }
+    DLLEXPORT void *div_tensor_scalar(void *ah, void *bh)
+    {
+        Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
+        Tensor *out = new Tensor(a->rows, a->cols);
+        out->_children = {a, b};
+        int n = a->size;
+        int blocks = (n + 255) / 256;
+        div_scalar_fwd_k<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, n);
+        out->_backward = [out, a, b, n, blocks]()
+        {
+            div_scalar_bwd_k<<<blocks, 256>>>(a->data_gpu, b->data_gpu, out->grad_gpu,
+                                              a->grad_gpu, b->grad_gpu, n);
+        };
+        return (void *)out;
+    }
+
     DLLEXPORT void *add_tensors(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;

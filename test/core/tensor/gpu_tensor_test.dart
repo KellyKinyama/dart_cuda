@@ -389,6 +389,83 @@ void main() {
     });
   });
 
+  group('Tensor — scalar broadcast', () {
+    test('add: [N, M] + [1, 1] broadcasts and accumulates scalar gradient', () {
+      final a = Tensor.fromList([2, 2], [1, 2, 3, 4]);
+      final b = Tensor.fromList([1, 1], [10]);
+      final c = a + b;
+      final loss = c.sum();
+      loss.backward();
+      addTearDown(() {
+        a.dispose();
+        b.dispose();
+        c.dispose();
+        loss.dispose();
+      });
+
+      expect(c.shape, equals([2, 2]));
+      expect(c.data, closeToList([11, 12, 13, 14]));
+      expect(a.grad, closeToList([1, 1, 1, 1]));
+      expect(b.grad, closeToList([4]));
+    });
+
+    test('sub: [N, M] - [1, 1] broadcasts and accumulates -sum(dOut)', () {
+      final a = Tensor.fromList([2, 2], [5, 6, 7, 8]);
+      final b = Tensor.fromList([1, 1], [2]);
+      final c = a - b;
+      final loss = c.sum();
+      loss.backward();
+      addTearDown(() {
+        a.dispose();
+        b.dispose();
+        c.dispose();
+        loss.dispose();
+      });
+
+      expect(c.data, closeToList([3, 4, 5, 6]));
+      expect(a.grad, closeToList([1, 1, 1, 1]));
+      expect(b.grad, closeToList([-4]));
+    });
+
+    test('mul: [N, M] * [1, 1] broadcasts and gradients use chain rule', () {
+      final a = Tensor.fromList([2, 2], [1, 2, 3, 4]);
+      final b = Tensor.fromList([1, 1], [3]);
+      final c = a * b;
+      final loss = c.sum();
+      loss.backward();
+      addTearDown(() {
+        a.dispose();
+        b.dispose();
+        c.dispose();
+        loss.dispose();
+      });
+
+      expect(c.data, closeToList([3, 6, 9, 12]));
+      // dA = b * dOut = 3 * 1 = 3 (each); dB = sum(A * dOut) = 1+2+3+4 = 10
+      expect(a.grad, closeToList([3, 3, 3, 3]));
+      expect(b.grad, closeToList([10]));
+    });
+
+    test('div: [N, M] / [1, 1] broadcasts and gradients use quotient rule', () {
+      final a = Tensor.fromList([1, 4], [2, 4, 6, 8]);
+      final b = Tensor.fromList([1, 1], [2]);
+      final c = a / b;
+      final loss = c.sum();
+      loss.backward();
+      addTearDown(() {
+        a.dispose();
+        b.dispose();
+        c.dispose();
+        loss.dispose();
+      });
+
+      expect(c.data, closeToList([1, 2, 3, 4]));
+      // dA = dOut / b = 0.5; dB = -sum(A * dOut) / b^2 = -(2+4+6+8)/4 = -5
+      expect(a.grad, closeToList([0.5, 0.5, 0.5, 0.5]));
+      expect(b.grad, closeToList([-5]));
+    });
+  });
+
   group('Tensor — autograd', () {
     test('sum.backward() yields ones gradient', () {
       final x = Tensor.fromList([2, 2], [1, 2, 3, 4]);

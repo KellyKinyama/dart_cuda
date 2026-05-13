@@ -247,6 +247,10 @@ class CudaEngine {
   late _D_op2 subTensors;
   late _D_op2 mulTensors;
   late _D_op2 divTensors;
+  late _D_op2 addTensorScalar;
+  late _D_op2 subTensorScalar;
+  late _D_op2 mulTensorScalar;
+  late _D_op2 divTensorScalar;
   late _D_op2 matmulTensors;
   late _D_pow powTensor;
   late _D_op1 reluTensor;
@@ -296,6 +300,10 @@ class CudaEngine {
     subTensors = _lib.lookupFunction<_C_op2, _D_op2>('sub_tensors');
     mulTensors = _lib.lookupFunction<_C_op2, _D_op2>('mul_tensors');
     divTensors = _lib.lookupFunction<_C_op2, _D_op2>('div_tensors');
+    addTensorScalar = _lib.lookupFunction<_C_op2, _D_op2>('add_tensor_scalar');
+    subTensorScalar = _lib.lookupFunction<_C_op2, _D_op2>('sub_tensor_scalar');
+    mulTensorScalar = _lib.lookupFunction<_C_op2, _D_op2>('mul_tensor_scalar');
+    divTensorScalar = _lib.lookupFunction<_C_op2, _D_op2>('div_tensor_scalar');
     matmulTensors = _lib.lookupFunction<_C_op2, _D_op2>('matmul_tensors');
     powTensor = _lib.lookupFunction<_C_pow, _D_pow>('pow_tensor');
     reluTensor = _lib.lookupFunction<_C_op1, _D_op1>('relu_tensor');
@@ -499,6 +507,20 @@ class Tensor {
   Tensor pow(double e) => Tensor._raw(engine.powTensor(_handle, e), shape);
   Tensor log() => Tensor._raw(engine.logTensor(_handle), shape);
 
+  /// Picks the matching scalar-broadcast variant for one of the four
+  /// elementwise binary ops. Returns `null` if [opFunc] isn't one of them.
+  ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Void>)?
+  _broadcastFor(
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Void>)
+    opFunc,
+  ) {
+    if (identical(opFunc, engine.addTensors)) return engine.addTensorScalar;
+    if (identical(opFunc, engine.subTensors)) return engine.subTensorScalar;
+    if (identical(opFunc, engine.mulTensors)) return engine.mulTensorScalar;
+    if (identical(opFunc, engine.divTensors)) return engine.divTensorScalar;
+    return null;
+  }
+
   /// Internal helper for element-wise operations (Add, Sub, Mul, Div)
   Tensor _scalarOp(
     dynamic other,
@@ -512,6 +534,16 @@ class Tensor {
       // 2. Check for Row-Broadcasting:
       // This allows adding a [1, N] bias to a [M, N] matrix
       bool isRowBroadcast = (other.shape[0] == 1 && other.shape[1] == shape[1]);
+
+      // 3. Scalar broadcast: `other` is a single value broadcast over `this`.
+      // Routes to dedicated CUDA kernels with full autograd through both
+      // operands (B's grad receives the appropriate reduction).
+      if (!exactMatch && other.length == 1) {
+        final fn = _broadcastFor(opFunc);
+        if (fn != null) {
+          return Tensor._raw(fn(_handle, other._handle), shape);
+        }
+      }
 
       // if (!isRowBroadcast) {
       //   throw ArgumentError(
