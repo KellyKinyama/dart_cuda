@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:image/image.dart' as img;
-import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 
 // void main() async {
 //   // Create a 256x256 8-bit (default) rgb (default) image.

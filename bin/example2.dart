@@ -3,10 +3,10 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ffi' as ffi;
 
-import 'package:dart_cuda/adam.dart';
-import 'package:dart_cuda/aft_transformer_decoder.dart';
-import 'package:dart_cuda/gpu_tensor.dart';
-import 'package:dart_cuda/nn.dart';
+import 'package:dart_cuda/core/optimizers/adam.dart';
+import 'package:dart_cuda/core/transformers/aft_transformer_decoder.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
+import 'package:dart_cuda/core/layers/nn.dart';
 
 // --- BINARY PERSISTENCE HELPERS ---
 

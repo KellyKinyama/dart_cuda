@@ -1,11 +1,11 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'package:dart_cuda/adam.dart';
-// import 'package:dart_cuda/aft_transformer_decoder.dart';
-import 'package:dart_cuda/gpu_tensor.dart';
-// import 'package:dart_cuda/network_utils.dart';
-import 'package:dart_cuda/aft_muzero_transformer_decoder.dart';
-import 'package:dart_cuda/mu_zero/mu_zero_greedy_agent2.dart'; // Your refined Agent class
+import 'package:dart_cuda/core/optimizers/adam.dart';
+// import 'package:dart_cuda/core/transformers/aft_transformer_decoder.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
+// import 'package:dart_cuda/core/utils/network_utils.dart';
+import 'package:dart_cuda/core/transformers/aft_muzero_transformer_decoder.dart';
+import 'package:dart_cuda/core/models/mu_zero/mu_zero_greedy_agent2.dart'; // Your refined Agent class
 
 class CharTokenizer {
   late List<String> chars;

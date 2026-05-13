@@ -1,6 +1,6 @@
 import 'dart:math';
 
-import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 
 void main() {
   print('\n Matrix multiplcation');

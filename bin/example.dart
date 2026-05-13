@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 
-import 'package:dart_cuda/adam.dart';
-import 'package:dart_cuda/aft_transformer_decoder.dart';
-import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/core/optimizers/adam.dart';
+import 'package:dart_cuda/core/transformers/aft_transformer_decoder.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 
 void main() {
   print("🚀 Starting GPU-Accelerated AFT-GPT Test Drive...");

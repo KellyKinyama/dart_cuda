@@ -3,8 +3,8 @@
 // optimistic), terminal handling, and the visit-distribution helper.
 
 import 'package:bishop/bishop.dart';
-import 'package:dart_cuda/mu_zero/muzero_chess_mcts.dart';
-import 'package:dart_cuda/mu_zero/muzero_chess_player.dart' show MoveTokenizer;
+import 'package:dart_cuda/core/models/mu_zero/muzero_chess_mcts.dart';
+import 'package:dart_cuda/core/models/mu_zero/muzero_chess_player.dart' show MoveTokenizer;
 import 'package:test/test.dart';
 
 MctsNode _node({

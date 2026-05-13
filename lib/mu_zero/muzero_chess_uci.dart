@@ -27,19 +27,19 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:bishop/bishop.dart';
-import 'package:dart_cuda/adam.dart';
+import 'package:dart_cuda/core/optimizers/adam.dart';
 import 'package:dart_cuda/loaders/dataset.dart';
-import 'package:dart_cuda/gpu_tensor.dart';
-import 'package:dart_cuda/mu_zero/deepseek_aft_decoder.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
+import 'package:dart_cuda/core/models/mu_zero/deepseek_aft_decoder.dart';
 
-import 'package:dart_cuda/mu_zero/muzero_chess_player.dart'
+import 'package:dart_cuda/core/models/mu_zero/muzero_chess_player.dart'
     show
         ChessMuZeroAgent,
         GameTrajectory,
         MoveTokenizer,
         buildTrajectory,
         warmupCosineLR;
-import 'package:dart_cuda/mu_zero/muzero_chess_mcts.dart' show pickNextMoveMcts;
+import 'package:dart_cuda/core/models/mu_zero/muzero_chess_mcts.dart' show pickNextMoveMcts;
 
 void _safeCleanup(List<Tensor> tracker, List<Tensor> params) {
   final freed = <int>{};

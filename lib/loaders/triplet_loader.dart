@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'package:image/image.dart' as img;
-import 'package:dart_cuda/gpu_tensor.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 
 class TripletLoader {
   final String rootPath;

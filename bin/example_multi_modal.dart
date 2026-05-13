@@ -2,11 +2,11 @@
 
 import 'dart:math';
 
-import 'package:dart_cuda/adam.dart';
-import 'package:dart_cuda/audio_transformer.dart';
-import 'package:dart_cuda/gpu_tensor.dart';
-import 'package:dart_cuda/multi_modal_transformer.dart';
-import 'package:dart_cuda/video_transformer.dart';
+import 'package:dart_cuda/core/optimizers/adam.dart';
+import 'package:dart_cuda/core/transformers/audio_transformer.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
+import 'package:dart_cuda/core/transformers/multi_modal_transformer.dart';
+import 'package:dart_cuda/core/transformers/video_transformer.dart';
 
 void main() {
   final random = Random();

@@ -1,6 +1,6 @@
-import 'package:dart_cuda/gpu_tensor.dart';
-import 'package:dart_cuda/adam.dart';
-import 'package:dart_cuda/vit_object_detector.dart';
+import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
+import 'package:dart_cuda/core/optimizers/adam.dart';
+import 'package:dart_cuda/core/models/vit_object_detector.dart';
 
 void main() {
   print("--- 🚀 GPU ViT-based Multi-Object Detection (Chain-Linked) ---");
