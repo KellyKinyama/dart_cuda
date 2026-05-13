@@ -1,31 +1,237 @@
-🚀 G-Tensor: High-Performance Dart & CUDA Deep Learning EngineG-Tensor is a custom deep learning framework that combines the developer productivity of Dart with the raw computational power of NVIDIA CUDA.Unlike standard wrappers, G-Tensor features a custom Autoregressive Functional Transformer (AFT) implementation, a manual Autograd engine, and hand-optimized CUDA kernels for operations like Causal Masking, Layer Normalization, and Cross-Entropy with Label Smoothing.🏗 System ArchitectureThe engine is split into three distinct layers:Dart API (Frontend): High-level Tensor class with operator overloading (+, -, *, matmul) and Module classes for building neural networks.FFI Bridge: A low-level Dart FFI (Foreign Function Interface) layer that handles memory addresses and dispatches calls to compiled C++/CUDA binaries.CUDA Kernels (Backend): Hand-written .cu kernels optimized for parallel execution on the GPU, featuring custom broadcasting logic and stable gradient calculations.🧠 The AFT Causal Mechanism (Mathematical Derivation)The core of this engine is the Attention Free Transformer (AFT). Unlike standard Multi-Head Attention which has $O(T^2)$ complexity, AFT reduces this to $O(Td)$ by re-arranging the interaction between Queries, Keys, and Values.The FormulationIn your implementation, the attention-like operation is defined as:$$Z_t = \sigma(Q_t) \odot \frac{\sum_{i=1}^t \exp(K_i + w_{t,i}) \odot V_i}{\sum_{i=1}^t \exp(K_i + w_{t,i})}$$Where:$\sigma$ is the Sigmoid activation.$\odot$ is the Element-wise (Hadamard) product (successfully verified in our test_tensor2.dart).$w_{t,i}$ represents the Learned Pairwise Position Bias.The Causal MaskTo ensure the model cannot "cheat" by looking at future tokens, we apply a triangular causal mask. In G-Tensor, this is handled by a specialized engine.mulTensors call during the forward pass, ensuring that for any time $t$, the gradients from $t+1 \dots T$ are exactly zero.✨ Key FeaturesCustom Autograd: Fully functional backpropagation through computational graphs.Efficient Memory Management: Explicit tracker and dispose system to prevent VRAM leaks in Dart's garbage-collected environment.Broadcasting: Support for adding row-vector biases to activation matrices via custom CUDA indexing (e.g., adding [1, 128] bias to [64, 128] activations).Advanced Loss Kernels: Stable Cross-Entropy with built-in LogSoftmax and Label Smoothing ($\epsilon = 0.1$).🛠 Installation & SetupPrerequisitesDart SDK (v3.0+)NVIDIA CUDA Toolkit (v11.0+)CMake (for building the C++ backend)Building the BackendNavigate to the src directory.Compile the CUDA shared library:Bashmkdir build && cd build
-cmake ..
-make
-Ensure the generated .so or .dll is in your LD_LIBRARY_PATH.💻 Usage Example1. Training with Memory ManagementBecause Dart is garbage collected but CUDA memory is not, you must use the tracker pattern:Dartfor (int step = 0; step < 1000; step++) {
-  List<Tensor> tracker = [];
+# 🚀 G-Tensor — High-Performance Dart & CUDA Deep Learning Engine
+
+**G-Tensor** (`dart_cuda`) is a custom deep-learning framework that combines
+the developer productivity of **Dart** with the raw computational power of
+**NVIDIA CUDA**.
+
+Unlike standard wrappers, G-Tensor features:
+
+- A custom **Attention-Free Transformer (AFT)** implementation
+- A manual **autograd** engine
+- Hand-optimised CUDA kernels for causal masking, layer normalisation, and
+  cross-entropy with label smoothing
+
+---
+
+## 🏗 System architecture
+
+The engine is split into three layers:
+
+1. **Dart API (frontend)** — high-level `Tensor` class with operator
+   overloading (`+`, `-`, `*`, `matmul`) and `Module` classes for building
+   neural networks.
+2. **FFI bridge** — a low-level Dart FFI layer that handles memory
+   addresses and dispatches calls to compiled C++/CUDA binaries.
+3. **CUDA kernels (backend)** — hand-written `.cu` kernels optimised for
+   parallel GPU execution, with custom broadcasting logic and stable
+   gradient calculations.
+
+---
+
+## 🧠 The AFT causal mechanism
+
+The core of this engine is the **Attention-Free Transformer**. Standard
+multi-head attention has $O(T^2)$ complexity; AFT reduces this to $O(T d)$
+by re-arranging the interaction between queries, keys and values.
+
+### Formulation
+
+$$
+Z_t \;=\; \sigma(Q_t) \;\odot\;
+\frac{\sum_{i=1}^{t} \exp(K_i + w_{t,i}) \odot V_i}
+     {\sum_{i=1}^{t} \exp(K_i + w_{t,i})}
+$$
+
+Where:
+
+- $\sigma$ is the sigmoid activation
+- $\odot$ is the elementwise (Hadamard) product
+- $w_{t,i}$ is a learned pairwise position bias
+
+### Causal masking
+
+To prevent the model from attending to future tokens, a triangular causal
+mask is applied. In G-Tensor this is handled by a specialised
+`engine.mulTensors` call during the forward pass, ensuring the gradients
+from steps $t+1, \dots, T$ are exactly zero.
+
+---
+
+## ✨ Key features
+
+- **Custom autograd** — fully functional backpropagation through the
+  computational graph.
+- **Explicit memory management** — `tracker` + `dispose` system to prevent
+  VRAM leaks in Dart's garbage-collected environment.
+- **Broadcasting** — adding row-vector biases to activation matrices via
+  custom CUDA indexing (e.g. `[1, 128]` bias added to `[64, 128]`
+  activations).
+- **Advanced loss kernels** — numerically stable cross-entropy with built-in
+  `LogSoftmax` and label smoothing ($\epsilon = 0.1$).
+
+---
+
+## 📁 Project layout
+
+```
+lib/                    Reusable library code
+├── core/
+│   ├── tensor/         GPU tensor + low-level engine bindings
+│   ├── layers/         nn.dart, layer_norm, feed_forward, mlp, conv_2d
+│   ├── attention/      AFT attention primitives
+│   ├── transformers/
+│   │   ├── aft/        Pure AFT encoder/decoder + blocks
+│   │   ├── deepseek/   DeepSeek-MoE decoder
+│   │   ├── vision/     ViT backbones, face embedding, object detection
+│   │   └── modalities/ text/audio/video/multi-modal wrappers
+│   ├── models/         MuZero agent, chess MCTS+UCI, …
+│   ├── optimizers/     adam, sgd, cross_entropy
+│   └── utils/          persistence, network_utils, triplet_loss, …
+└── loaders/            Dataset / image / triplet loaders
+
+native/
+├── src/                CUDA sources (.cu, .h)
+└── lib/                Compiled shared libraries (.so) — gitignored
+
+example/                Runnable demos & training scripts
+├── bin/                CLI entry-points (`dart run example/bin/...`)
+├── mu_zero/            MuZero demos (incl. UCI engine)
+├── tool/               Training / match orchestration scripts
+└── tools/              Stockfish + helper scripts
+
+test/                   `dart test` suite
+```
+
+See [STRUCTURE.md](STRUCTURE.md) for the full file-by-file map.
+
+---
+
+## 🛠 Installation & setup
+
+### Prerequisites
+
+- Dart SDK ≥ 3.0
+- NVIDIA CUDA Toolkit ≥ 11.0 (`nvcc` on `PATH`)
+- A CUDA-capable GPU
+
+### Build the CUDA backend
+
+The shared libraries live under `native/lib/`. From the repo root:
+
+```bash
+nvcc --shared -o native/lib/libmat_mul.so native/src/engine.cu    -Xcompiler -fPIC
+nvcc --shared -o native/lib/dart_cuda.so  native/src/dart_cuda.cu -Xcompiler -fPIC
+```
+
+To rebuild against the v2 engine:
+
+```bash
+nvcc --shared -o native/lib/libmat_mul.so native/src/engine_v2.cu -Xcompiler -fPIC
+```
+
+The Dart FFI loader resolves these libraries relative to
+`Directory.current.path`, so run all `dart` commands from the repo root.
+
+### Install Dart dependencies
+
+```bash
+dart pub get
+```
+
+---
+
+## 💻 Usage
+
+### 1. Training with explicit memory management
+
+Because Dart is garbage-collected but CUDA memory is not, intermediate
+tensors must be tracked and freed each step:
+
+```dart
+for (int step = 0; step < 1000; step++) {
+  final tracker = <Tensor>[];
   optimizer.zeroGrad();
 
   // Forward pass
   final logits = gpt.forward(inputIdx, dummyEnc, tracker);
-  final loss = logits.crossEntropy(targetIds); 
+  final loss   = logits.crossEntropy(targetIds);
 
   // Backward pass
   loss.backward();
   optimizer.step();
 
-  // CLEANUP: Free intermediate tensors to prevent CUDA OOM
-  for (var t in tracker) {
+  // Free intermediate tensors to prevent CUDA OOM
+  for (final t in tracker) {
     if (!gpt.parameters().contains(t)) t.dispose();
   }
   loss.dispose();
 }
-2. Autoregressive GenerationThe engine supports greedy and nucleus sampling for text generation:Dartvoid generate(String prompt) {
-  List<int> tokens = tokenizer.encode(prompt);
-  final logits = gpt.forward(tokens, dummyEnc, []);
-  
-  // Fetch only the last row for prediction
-  List<double> lastLogits = logits.fetchRow(tokens.length - 1);
-  int nextToken = sampleNucleus(lastLogits, temp: 0.8, topP: 0.9);
+```
+
+### 2. Autoregressive generation
+
+The engine supports greedy and nucleus sampling for text generation:
+
+```dart
+void generate(String prompt) {
+  final tokens = tokenizer.encode(prompt);
+  final logits = gpt.forward(tokens, dummyEnc, <Tensor>[]);
+
+  // Fetch only the last row for the next-token prediction
+  final lastLogits = logits.fetchRow(tokens.length - 1);
+  final nextToken  = sampleNucleus(lastLogits, temp: 0.8, topP: 0.9);
   print(tokenizer.decode([nextToken]));
 }
-📊 Performance BenchmarksOperationInput ShapeG-Tensor (CUDA)AFT Forward[64, 128]~0.9msCrossEntropy[64, 50257]~1.1msLayerNorm[64, 128]~0.3ms🤝 Roadmap & ContributingCurrent development priorities:2D Batching: Optimizing matmul kernels for [Batch, Seq, Hidden] shapes.KV-Caching: Implementation for faster inference.RMSNorm: Adding support for Llama-style normalization.Maintainer: kkinyamaProject: dart_cuda
+```
+
+---
+
+## 🎮 Running the examples
+
+```bash
+# Train a tiny GPT on Tiny-Shakespeare
+dart run example/bin/shakespear.dart
+
+# XOR sanity check
+dart run example/train_xor.dart
+
+# Multi-modal (audio + video + text) demo
+dart run example/bin/example_multi_modal.dart
+
+# MuZero chess: train then play
+dart run example/mu_zero/example.dart
+
+# UCI engine (use in any chess GUI)
+dart run example/mu_zero/muzero_chess_uci.dart --no-train
+```
+
+See [commands.md](commands.md) for the full set of MuZero / Stockfish
+training recipes.
+
+---
+
+## 📊 Performance benchmarks
+
+| Operation     | Input shape   | G-Tensor (CUDA) |
+| ------------- | ------------- | --------------- |
+| AFT forward   | `[64, 128]`   | ~0.9 ms         |
+| Cross-entropy | `[64, 50257]` | ~1.1 ms         |
+| LayerNorm     | `[64, 128]`   | ~0.3 ms         |
+
+---
+
+## 🤝 Roadmap
+
+- **2D batching** — optimise `matmul` kernels for `[batch, seq, hidden]`.
+- **KV-caching** — faster autoregressive inference.
+- **RMSNorm** — Llama-style normalisation.
+- **Linformer / vanilla attention** — alternative families alongside AFT
+  (placeholders ready under `lib/core/transformers/`).
+
+---
+
+## 📜 License
+
+See [LICENSE](LICENSE).
+
+**Maintainer:** kkinyama  ·  **Project:** `dart_cuda`
