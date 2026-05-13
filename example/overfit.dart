@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:dart_cuda/core/optimizers/adam.dart';
-import 'package:dart_cuda/core/transformers/aft_transformer_decoder.dart';
+import 'package:dart_cuda/core/transformers/aft/transformer_decoder.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 
 class CharTokenizer {

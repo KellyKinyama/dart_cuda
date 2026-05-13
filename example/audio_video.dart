@@ -1,8 +1,8 @@
 // file: test_run_multimodal_gpu.dart
 
 import 'dart:math';
-import 'package:dart_cuda/core/transformers/audio_transformer.dart';
-import 'package:dart_cuda/core/transformers/video_transformer.dart';
+import 'package:dart_cuda/core/transformers/modalities/audio_transformer.dart';
+import 'package:dart_cuda/core/transformers/modalities/video_transformer.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 import 'package:dart_cuda/core/optimizers/adam.dart';
 

@@ -10,7 +10,7 @@ import 'dart:math' as math;
 import 'package:dart_cuda/core/optimizers/adam.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 
-import 'package:dart_cuda/core/models/mu_zero/deepseek_aft_decoder.dart';
+import 'package:dart_cuda/core/transformers/deepseek/deepseek_aft_decoder.dart';
 import 'deepseek_aft_training.dart' show warmupCosineLR, sampleToken;
 
 class CharTokenizer {

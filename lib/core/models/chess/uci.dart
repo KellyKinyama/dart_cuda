@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:bishop/bishop.dart';
 
-import 'package:dart_cuda/core/transformers/aft_transformer_decoder.dart';
+import 'package:dart_cuda/core/transformers/aft/transformer_decoder.dart';
 // import 'package:dart_cuda/chess/gpt_model2.dart';
 import 'package:dart_cuda/core/utils/network_utils.dart';
 import 'package:dart_cuda/core/models/chess/mcts.dart' as mc;

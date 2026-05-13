@@ -1,5 +1,5 @@
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
-import 'package:dart_cuda/core/transformers/aft_transformer_encoder_block.dart';
+import 'package:dart_cuda/core/transformers/aft/transformer_encoder_block.dart';
 import 'package:dart_cuda/core/layers/layer_norm.dart';
 import 'package:dart_cuda/core/layers/nn.dart';
 

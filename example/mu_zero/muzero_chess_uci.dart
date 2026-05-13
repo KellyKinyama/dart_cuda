@@ -30,7 +30,7 @@ import 'package:bishop/bishop.dart';
 import 'package:dart_cuda/core/optimizers/adam.dart';
 import 'package:dart_cuda/loaders/dataset.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
-import 'package:dart_cuda/core/models/mu_zero/deepseek_aft_decoder.dart';
+import 'package:dart_cuda/core/transformers/deepseek/deepseek_aft_decoder.dart';
 
 import 'package:dart_cuda/core/models/mu_zero/muzero_chess_player.dart'
     show

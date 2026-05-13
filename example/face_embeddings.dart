@@ -3,7 +3,7 @@
 import 'package:dart_cuda/core/utils/network_utils.dart';
 
 import 'package:dart_cuda/core/optimizers/adam.dart';
-import 'package:dart_cuda/core/transformers/aft_vit_face_embeding.dart';
+import 'package:dart_cuda/core/transformers/vision/vit_face_embedding.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 import 'package:dart_cuda/core/utils/triplet_loss.dart';
 import 'package:dart_cuda/loaders/triplet_loader.dart';

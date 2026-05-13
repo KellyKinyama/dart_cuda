@@ -1,5 +1,5 @@
 import 'dart:math' as math;
-import 'package:dart_cuda/core/transformers/aft_muzero_transformer_decoder.dart';
+import 'package:dart_cuda/core/transformers/aft/muzero_transformer_decoder.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 
 class MuZeroGreedyAgent {

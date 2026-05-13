@@ -1,4 +1,4 @@
-import 'package:dart_cuda/core/transformers/aft_muzero_transformer_decoder.dart';
+import 'package:dart_cuda/core/transformers/aft/muzero_transformer_decoder.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 import 'package:dart_cuda/core/optimizers/adam.dart'; // Ensure this path is correct for your Adam optimizer
 import 'package:dart_cuda/core/models/mu_zero/muzero_greedy_agent.dart';

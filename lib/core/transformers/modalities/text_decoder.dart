@@ -2,7 +2,7 @@
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 import 'package:dart_cuda/core/layers/layer_norm.dart';
 import 'package:dart_cuda/core/layers/nn.dart';
-import 'package:dart_cuda/core/transformers/aft_text_decoder_block.dart'; // Your new file
+import 'package:dart_cuda/core/transformers/aft/text_decoder_block.dart'; // Your new file
 
 class TextDecoder extends Module {
   final int vocabSize;

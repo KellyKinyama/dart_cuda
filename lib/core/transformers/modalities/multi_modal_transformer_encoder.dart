@@ -1,10 +1,10 @@
 // lib/multi_modal_transformer.dart (Updated)
-import 'package:dart_cuda/core/transformers/aft_transformer_encoder.dart';
-import 'package:dart_cuda/core/transformers/audio_transformer.dart';
+import 'package:dart_cuda/core/transformers/aft/transformer_encoder.dart';
+import 'package:dart_cuda/core/transformers/modalities/audio_transformer.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 import 'package:dart_cuda/core/layers/nn.dart';
-import 'package:dart_cuda/core/transformers/text_transformer.dart';
-import 'package:dart_cuda/core/transformers/video_transformer.dart';
+import 'package:dart_cuda/core/transformers/modalities/text_transformer.dart';
+import 'package:dart_cuda/core/transformers/modalities/video_transformer.dart';
 
 class MultimodalTransformer extends Module {
   final AudioTransformer audioEncoder;

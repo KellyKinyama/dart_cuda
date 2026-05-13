@@ -22,20 +22,26 @@ lib/
 │   │   ├── aft_cross_attention.dart
 │   │   ├── aft_multi_head_attention.dart
 │   │   └── aft_multi_head_cross_attention.dart
-│   ├── transformers/     # Encoder / decoder stacks & modality wrappers
-│   │   ├── aft_transformer_{encoder,decoder}{,_block}.dart
-│   │   ├── aft_text_decoder_block.dart
-│   │   ├── aft_muzero_transformer_decoder.dart
-│   │   ├── aft_vit_{backbone,face_embeding}.dart
-│   │   ├── text_decoder.dart
-│   │   ├── text_transformer.dart
-│   │   ├── audio_transformer.dart
-│   │   ├── video_transformer.dart
-│   │   ├── multi_modal_transformer{,2}.dart
-│   │   └── multi_modal_trnasformer_encoder.dart
-│   ├── models/           # Higher-level task models
-│   │   ├── vit_object_detector.dart
-│   │   ├── mu_zero/      # MuZero core (decoder, agents, MCTS, training)
+│   ├── transformers/     # Transformer architectures, grouped by family
+│   │   ├── aft/          # Pure AFT encoder/decoder + blocks
+│   │   │   ├── transformer_{encoder,decoder}{,_block}.dart
+│   │   │   ├── text_decoder_block.dart
+│   │   │   └── muzero_transformer_decoder.dart
+│   │   ├── deepseek/     # DeepSeek-style MoE decoder (built on AFT)
+│   │   │   └── deepseek_aft_decoder.dart
+│   │   ├── vision/       # ViT backbones & vision heads
+│   │   │   ├── vit_backbone.dart
+│   │   │   ├── vit_face_embedding.dart
+│   │   │   └── vit_object_detector.dart
+│   │   └── modalities/   # Modality-specific wrappers (built on AFT)
+│   │       ├── text_decoder.dart
+│   │       ├── text_transformer.dart
+│   │       ├── audio_transformer.dart
+│   │       ├── video_transformer.dart
+│   │       ├── multi_modal_transformer{,2}.dart
+│   │       └── multi_modal_transformer_encoder.dart
+│   ├── models/           # Higher-level task models (non-transformer logic)
+│   │   ├── mu_zero/      # MuZero agent, chess player, MCTS, training
 │   │   └── chess/        # Chess-specific MCTS + UCI helpers
 │   ├── optimizers/       # adam, sgd, cross_entropy
 │   └── utils/            # network_utils, persistence, triplet_loss,
@@ -83,7 +89,10 @@ test/scratch/             # ad-hoc tensor sanity checks
 | Adam optimizer                  | `lib/core/optimizers/adam.dart` |
 | Base `Layer` / `Module` class   | `lib/core/layers/nn.dart` |
 | AFT attention                   | `lib/core/attention/` |
-| Transformer encoder/decoder     | `lib/core/transformers/` |
+| Transformer encoder/decoder     | `lib/core/transformers/aft/` |
+| DeepSeek MoE decoder            | `lib/core/transformers/deepseek/` |
+| ViT backbones / vision heads    | `lib/core/transformers/vision/` |
+| Text/audio/video/multi-modal    | `lib/core/transformers/modalities/` |
 | MuZero chess agent              | `lib/core/models/mu_zero/` |
 | Image / PGN dataset loaders     | `lib/loaders/` |
 | Train-from-scratch demos        | `example/` and `example/bin/` |

@@ -1,6 +1,6 @@
 // file: lib/text_transformer.dart
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
-import 'package:dart_cuda/core/transformers/aft_transformer_encoder.dart';
+import 'package:dart_cuda/core/transformers/aft/transformer_encoder.dart';
 import 'package:dart_cuda/core/layers/nn.dart';
 
 class TextTransformer extends Module {

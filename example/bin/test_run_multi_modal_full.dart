@@ -1,12 +1,12 @@
 import 'dart:math';
 import 'package:dart_cuda/core/optimizers/adam.dart';
-import 'package:dart_cuda/core/transformers/audio_transformer.dart';
+import 'package:dart_cuda/core/transformers/modalities/audio_transformer.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
-import 'package:dart_cuda/core/transformers/multi_modal_trnasformer_encoder.dart';
-import 'package:dart_cuda/core/transformers/text_decoder.dart';
-// import 'package:dart_cuda/core/transformers/multi_modal_transformer2.dart';
-import 'package:dart_cuda/core/transformers/video_transformer.dart';
-import 'package:dart_cuda/core/transformers/text_transformer.dart';
+import 'package:dart_cuda/core/transformers/modalities/multi_modal_transformer_encoder.dart';
+import 'package:dart_cuda/core/transformers/modalities/text_decoder.dart';
+// import 'package:dart_cuda/core/transformers/modalities/multi_modal_transformer2.dart';
+import 'package:dart_cuda/core/transformers/modalities/video_transformer.dart';
+import 'package:dart_cuda/core/transformers/modalities/text_transformer.dart';
 
 // test_run_multimodal.dart (Updated for Generative Task)
 void main() {

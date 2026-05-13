@@ -1,4 +1,4 @@
-import 'package:dart_cuda/core/transformers/aft_vit_backbone.dart';
+import 'package:dart_cuda/core/transformers/vision/vit_backbone.dart';
 import 'package:dart_cuda/core/tensor/gpu_tensor.dart';
 import 'package:dart_cuda/core/layers/nn.dart';
 
