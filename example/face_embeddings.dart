@@ -71,12 +71,11 @@ Future<void> main() async {
 
     // --- 6. Safe Memory Cleanup ---
     // We pass both the tracker and the model parameters to ensure safety
-    // _safeCleanup(tracker, totalLoss, modelParams);
-    // totalLoss.dispose();
-    // anchor.dispose();
-    // positive.dispose();
-    // negative.dispose();
-    // optimizer.dispose();
+    _safeCleanup(tracker, totalLoss, modelParams);
+    tracker.clear();
+    anchor.dispose();
+    positive.dispose();
+    negative.dispose();
   }
   // } catch (e) {
   //   print("Caught Exception: $e");

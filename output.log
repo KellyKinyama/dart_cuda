@@ -1,10 +1,295 @@
---- DeepSeek MoE + AFT MuZero Chess Player ---
-Move vocab: 4098, board vocab: 13
-Model params (tensors): 182  routed=4 top-2 shared=1
-Loaded 8 training games, avg moves=32.0
+📦 Loading Original Images (imgSize=32, patchSize=8)...
+Classes=6 | train=54 | val=18 | triplet-ready classes=6 | numPatches=16 | patchPixels=192
+🚀 Training ViT face embeddings with TripletLoss (steps=120, triplets/step=1, lr=0.0001, margin=0.2, embed=32, outDim=32, layers=1)
+  step    1 | loss=0.0000 (ema=0.0000) | active=0/1
+  step    2 | loss=0.1898 (ema=0.0190) | active=1/1
+  step    3 | loss=0.3506 (ema=0.0521) | active=1/1
+  step    4 | loss=0.1733 (ema=0.0642) | active=1/1
+  step    5 | loss=0.2377 (ema=0.0816) | active=1/1
+  step    6 | loss=0.2323 (ema=0.0967) | active=1/1
+  step    7 | loss=0.2298 (ema=0.1100) | active=1/1
+  step    8 | loss=0.1974 (ema=0.1187) | active=1/1
+  step    9 | loss=0.1294 (ema=0.1198) | active=1/1
+  step   10 | loss=0.1951 (ema=0.1273) | active=1/1
+  step   11 | loss=0.0000 (ema=0.1146) | active=0/1
+  step   12 | loss=0.1764 (ema=0.1208) | active=1/1
+  step   13 | loss=0.5036 (ema=0.1591) | active=1/1
+  step   14 | loss=0.2750 (ema=0.1707) | active=1/1
+  step   15 | loss=0.2715 (ema=0.1807) | active=1/1
+  step   16 | loss=0.2253 (ema=0.1852) | active=1/1
+  step   17 | loss=0.1982 (ema=0.1865) | active=1/1
+  step   18 | loss=0.4139 (ema=0.2092) | active=1/1
+  step   19 | loss=0.0000 (ema=0.1883) | active=0/1
+  step   20 | loss=0.0000 (ema=0.1695) | active=0/1
+  step   21 | loss=0.5069 (ema=0.2032) | active=1/1
 
---- Self-play demo (greedy, legal-move masked) ---
-terminal: no legal moves
-
-Final FEN: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
-EXIT_CODE: 0
+===== CRASH =====
+si_signo=Segmentation fault(11), si_code=SEGV_MAPERR(1), si_addr=0x20
+version=3.9.3 (stable) (Tue Sep 9 12:02:51 2025 -0700) on "linux_x64"
+pid=49201, thread=49252, isolate_group=main(0x555d64dc30b0), isolate=main(0x555d64dbb8a0)
+os=linux, arch=x64, comp=no, sim=no
+isolate_instructions=555d29b99d80, vm_instructions=555d29b99d80
+fp=7a02aebfafb0, sp=7a02aebfafb0, pc=7a02ac841bdc
+  pc 0x00007a02ac841bdc fp 0x00007a02aebfafb0 __gnu_cxx::__normal_iterator<Tensor**, std::vector<Tensor*, std::allocator<Tensor*>>>::__normal_iterator(Tensor** const&)+0x14
+  pc 0x00007a02ac840938 fp 0x00007a02aebfafe0 std::vector<Tensor*, std::allocator<Tensor*>>::begin()+0x32
+  pc 0x00007a02ac8282bf fp 0x00007a02aebfb030 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222bf
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb060 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb090 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb0c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb0f0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb140 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb170 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb1a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb1d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb200 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb250 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb280 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb2b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb2e0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb310 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb360 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb390 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb3c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb3f0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb420 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb470 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb4a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb4d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb500 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb530 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb580 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb5b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb5e0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb610 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb640 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb690 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb6c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb6f0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb720 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb750 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb7a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb7d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb800 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb830 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb860 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb8b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb8e0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfb910 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfb940 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfb970 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfb9c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfb9f0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfba20 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfba50 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfba80 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfbad0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfbb00 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfbb30 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfbb60 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfbb90 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfbbe0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfbc10 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfbc40 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfbc70 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfbca0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfbcf0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfbd20 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfbd50 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfbd80 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfbdb0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfbe00 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfbe30 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfbe60 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfbe90 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfbec0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfbf10 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfbf40 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfbf70 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfbfa0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfbfd0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc020 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc050 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc080 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc0b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc0e0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc130 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc160 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc190 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc1c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc1f0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc240 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc270 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc2a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc2d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc300 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc350 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc380 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc3b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc3e0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc410 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc460 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc490 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc4c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc4f0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc520 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc570 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc5a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc5d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc600 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc630 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc680 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc6b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc6e0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc710 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc740 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc790 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc7c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc7f0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc820 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc850 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc8a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc8d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfc900 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfc930 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfc960 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfc9b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfc9e0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfca10 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfca40 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfca70 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfcac0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfcaf0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfcb20 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfcb50 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfcb80 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfcbd0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfcc00 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfcc30 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfcc60 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfcc90 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfcce0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfcd10 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfcd40 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfcd70 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfcda0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfcdf0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfce20 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfce50 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfce80 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfceb0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfcf00 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfcf30 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfcf60 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfcf90 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfcfc0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd010 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd040 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd070 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd0a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd0d0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd120 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd150 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd180 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd1b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd1e0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd230 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd260 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd290 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd2c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd2f0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd340 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd370 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd3a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd3d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd400 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd450 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd480 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd4b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd4e0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd510 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd560 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd590 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd5c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd5f0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd620 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd670 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd6a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd6d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd700 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd730 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd780 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd7b0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd7e0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd810 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd840 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd890 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd8c0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfd8f0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfd920 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfd950 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfd9a0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfd9d0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfda00 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfda30 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfda60 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfdab0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfdae0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfdb10 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfdb40 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfdb70 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfdbc0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfdbf0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfdc20 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfdc50 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfdc80 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfdcd0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfdd00 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfdd30 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfdd60 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfdd90 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfdde0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfde10 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfde40 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfde70 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfdea0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfdef0 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfdf20 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfdf50 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfdf80 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfdfb0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8282ff fp 0x00007a02aebfe000 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x222ff
+  pc 0x00007a02ac83b864 fp 0x00007a02aebfe030 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x35864
+  pc 0x00007a02ac839e13 fp 0x00007a02aebfe060 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x33e13
+  pc 0x00007a02ac83895f fp 0x00007a02aebfe090 /mnt/c/Users/kkinyama/dart_cuda/native/lib/libmat_mul.so+0x3295f
+  pc 0x00007a02ac840a69 fp 0x00007a02aebfe0c0 std::function<void (Tensor*)>::operator()(Tensor*) const+0x4d
+  pc 0x00007a02ac8283ef fp 0x00007a02aebfe1c0 backward+0x9f
+  pc 0x00007a02e5906fbb fp 0x00007a02aebfe1e8 Unknown symbol
+  pc 0x00007a02afe60644 fp 0x00007a02aebfe220 Unknown symbol
+  pc 0x00007a02afe604d0 fp 0x00007a02aebfe278 Unknown symbol
+  pc 0x00007a02c6923f6f fp 0x00007a02aebfe438 Unknown symbol
+  pc 0x00007a02c6921dd6 fp 0x00007a02aebfe468 Unknown symbol
+  pc 0x00007a02c6920c04 fp 0x00007a02aebfe4d0 Unknown symbol
+  pc 0x00007a02c6920ed4 fp 0x00007a02aebfe518 Unknown symbol
+  pc 0x00007a02c6920c04 fp 0x00007a02aebfe580 Unknown symbol
+  pc 0x00007a02c691fa9d fp 0x00007a02aebfe5d8 Unknown symbol
+  pc 0x00007a02e5903406 fp 0x00007a02aebfe650 Unknown symbol
+  pc 0x0000555d29d52543 fp 0x00007a02aebfe6c0 dart::DartEntry::InvokeFunction+0x193
+  pc 0x0000555d29d53f0d fp 0x00007a02aebfe700 dart::DartLibraryCalls::HandleMessage+0x11d
+  pc 0x0000555d29d7276c fp 0x00007a02aebfec90 dart::IsolateMessageHandler::HandleMessage+0x33c
+  pc 0x0000555d29d95960 fp 0x00007a02aebfed00 dart::MessageHandler::HandleMessages+0x130
+  pc 0x0000555d29d95d50 fp 0x00007a02aebfed50 dart::MessageHandler::TaskCallback+0x1e0
+  pc 0x0000555d29e6fee7 fp 0x00007a02aebfedd0 dart::ThreadPool::WorkerLoop+0x127
+  pc 0x0000555d29e70142 fp 0x00007a02aebfee00 dart::ThreadPool::Worker::Main+0x72
+  pc 0x0000555d29e20189 fp 0x00007a02aebfeec0 dart::ThreadStart+0xd9
+  pc 0x00007a02e609caa4 fp 0x00007a02aebfef70 /lib/x86_64-linux-gnu/libc.so.6+0x9caa4
+-- End of DumpStackTrace
+  pc 0x0000000000000000 fp 0x00007a02aebfe1e8 sp 0x0000000000000000 Cannot find code object
+  pc 0x00007a02afe60644 fp 0x00007a02aebfe220 sp 0x00007a02aebfe1f8 [Optimized] new CudaEngine..#ffiClosure4
+  pc 0x00007a02afe604d0 fp 0x00007a02aebfe278 sp 0x00007a02aebfe230 [Unoptimized] Tensor.backward
+  pc 0x00007a02c6923f6f fp 0x00007a02aebfe438 sp 0x00007a02aebfe288 [Unoptimized] main
+  pc 0x00007a02c6921dd6 fp 0x00007a02aebfe468 sp 0x00007a02aebfe448 [Unoptimized] main
+  pc 0x00007a02c6920c04 fp 0x00007a02aebfe4d0 sp 0x00007a02aebfe478 [Unoptimized] _Closure@0150898.dyn:call
+  pc 0x00007a02c6920ed4 fp 0x00007a02aebfe518 sp 0x00007a02aebfe4e0 [Unoptimized] _delayEntrypointInvocation@1026248.<anonymous closure>
+  pc 0x00007a02c6920c04 fp 0x00007a02aebfe580 sp 0x00007a02aebfe528 [Unoptimized] _Closure@0150898.dyn:call
+  pc 0x00007a02c691fa9d fp 0x00007a02aebfe5d8 sp 0x00007a02aebfe590 [Unoptimized] _RawReceivePort@1026248._handleMessage@1026248
+  pc 0x00007a02e5903406 fp 0x00007a02aebfe650 sp 0x00007a02aebfe5e8 [Stub] InvokeDartCode

@@ -28,6 +28,12 @@ extern "C"
             cudaMalloc(&data_gpu, size * sizeof(float));
             cudaMalloc(&grad_gpu, size * sizeof(float));
             cudaMemset(grad_gpu, 0, size * sizeof(float));
+            static long __nt=0; __nt++;
+            if (__nt%500==0) {
+                size_t f=0,t=0; cudaMemGetInfo(&f,&t);
+                // fprintf(stderr,"[T#%ld free=%zu MiB]\n",__nt,f/(1024*1024));
+                fflush(stderr);
+            }
         }
 
         ~Tensor()
@@ -52,10 +58,12 @@ extern "C"
     {
         if (!h)
             return;
-        Tensor *t = (Tensor *)h;
-        cudaFree(t->data_gpu);
-        cudaFree(t->grad_gpu);
-        delete t; // Delete the struct itself
+        // ~Tensor() handles cudaFree of data_gpu/grad_gpu when !is_view.
+        // Previously we hand-rolled the cudaFree here and skipped `delete`,
+        // which leaked the C++ struct (vectors, std::function, pointer
+        // members) on every dispose. Letting the destructor run reclaims
+        // both GPU buffers and the host-side struct.
+        delete (Tensor *)h;
     }
     DLLEXPORT void get_tensor_data(void *h, float *b)
     {
@@ -81,25 +89,54 @@ extern "C"
 
     DLLEXPORT void backward(void *h)
     {
-        Tensor *t = (Tensor *)h;
+        // Drain any in-flight forward kernels before walking the graph.
+        // Without this, an asynchronous forward kernel can still be
+        // writing to a Tensor's data buffer while we read its children
+        // pointer here, producing spurious corruption / segfaults that
+        // surface several training steps later.
+        cudaDeviceSynchronize();
+        Tensor *root = (Tensor *)h;
         std::vector<Tensor *> topo;
         std::unordered_set<Tensor *> visited;
-        std::function<void(Tensor *)> build = [&](Tensor *v)
+
+        // Iterative post-order DFS. The previous version used a recursive
+        // std::function lambda, which would overflow the FFI thread stack
+        // for deep autograd graphs (e.g. multi-layer ViT encoders) and
+        // segfault inside backward(). Using an explicit stack keeps the
+        // recursion depth bounded by heap memory instead.
+        std::vector<std::pair<Tensor *, size_t>> stack;
+        stack.reserve(64);
+        topo.reserve(256);
+        visited.insert(root);
+        stack.push_back({root, 0});
+        while (!stack.empty())
         {
-            if (visited.find(v) == visited.end())
+            auto &top = stack.back();
+            Tensor *v = top.first;
+            if (top.second < v->_children.size())
             {
-                visited.insert(v);
-                for (Tensor *c : v->_children)
-                    build(c);
-                topo.push_back(v);
+                Tensor *c = v->_children[top.second++];
+                if (visited.insert(c).second)
+                {
+                    stack.push_back({c, 0});
+                }
             }
-        };
-        build(t);
-        std::vector<float> ones(t->size, 1.0f);
-        cudaMemset(t->grad_gpu, 0, t->size * sizeof(float)); // Reset current grad
-        cudaMemcpy(t->grad_gpu, ones.data(), t->size * sizeof(float), cudaMemcpyHostToDevice);
+            else
+            {
+                topo.push_back(v);
+                stack.pop_back();
+            }
+        }
+
+        std::vector<float> ones(root->size, 1.0f);
+        cudaMemset(root->grad_gpu, 0, root->size * sizeof(float));
+        cudaMemcpy(root->grad_gpu, ones.data(), root->size * sizeof(float), cudaMemcpyHostToDevice);
         for (auto it = topo.rbegin(); it != topo.rend(); ++it)
             (*it)->_backward();
+        // Make sure all backward kernels have completed before returning,
+        // so any subsequent disposal of intermediate tensors cannot race
+        // with in-flight backward kernels still holding their pointers.
+        cudaDeviceSynchronize();
     }
 
     // Op wrappers...
@@ -512,6 +549,13 @@ extern "C"
         cudaMemcpy(d_inputs, h_inputs, num_tensors * sizeof(float *), cudaMemcpyHostToDevice);
 
         concat_axis1_fwd<<<(out->size + 255) / 256, 256>>>(d_inputs, out->data_gpu, num_tensors, rows, cols_per_t);
+        // The forward kernel only reads from d_inputs; once it has been
+        // dispatched (the device pointer table is consumed by the launch
+        // before this returns from the host's perspective), we can free
+        // the temporary device array. cudaDeviceSynchronize ensures the
+        // kernel has actually consumed it.
+        cudaDeviceSynchronize();
+        cudaFree(d_inputs);
 
         out->_backward = [out, ts, num_tensors, rows, cols_per_t]()
         {
@@ -560,9 +604,21 @@ extern "C"
         cudaMemcpy(d_offsets, h_offsets.data(), (num_tensors + 1) * sizeof(int), cudaMemcpyHostToDevice);
 
         concat_axis0_fwd<<<(out->size + 255) / 256, 256>>>(d_inputs, out->data_gpu, num_tensors, d_offsets, cols);
+        cudaDeviceSynchronize();
         cudaFree(d_inputs);
 
-        out->_backward = [out, ts, num_tensors, cols, d_offsets]()
+        // d_offsets must outlive the forward (we keep it for backward) but
+        // we have to make sure it is freed even if backward never runs (NaN
+        // early-exit in training loops). Capture it in a small refcounted
+        // owner so the destructor will free it when both the forward path
+        // and any pending backward closure have released their reference.
+        struct OffsetsHolder {
+            int *ptr;
+            ~OffsetsHolder() { if (ptr) cudaFree(ptr); }
+        };
+        auto offsetsHolder = std::make_shared<OffsetsHolder>(OffsetsHolder{d_offsets});
+
+        out->_backward = [out, ts, num_tensors, cols, offsetsHolder]()
         {
             float **d_grads;
             std::vector<float *> h_grads(num_tensors);
@@ -570,9 +626,10 @@ extern "C"
             cudaMalloc(&d_grads, num_tensors * sizeof(float *));
             cudaMemcpy(d_grads, h_grads.data(), num_tensors * sizeof(float *), cudaMemcpyHostToDevice);
 
-            concat_axis0_bwd<<<(out->size + 255) / 256, 256>>>(out->grad_gpu, d_grads, num_tensors, d_offsets, cols);
+            concat_axis0_bwd<<<(out->size + 255) / 256, 256>>>(out->grad_gpu, d_grads, num_tensors, offsetsHolder->ptr, cols);
             cudaFree(d_grads);
-            cudaFree(d_offsets);
+            // offsetsHolder is freed automatically when this lambda is
+            // destroyed (i.e. when `out` is destroyed).
         };
 
         out->_children = ts;

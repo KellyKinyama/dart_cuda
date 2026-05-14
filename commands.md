@@ -1,10 +1,12 @@
 nvcc --shared -o native/lib/libmat_mul.so native/src/engine.cu -Xcompiler -fPIC
 
-nvcc --shared -o native/lib/dart_cuda.so native/src/dart_cuda.cu -Xcompiler -fPIC
+<!-- nvcc --shared -o native/lib/dart_cuda.so native/src/dart_cuda.cu -Xcompiler -fPIC -->
 
 
 
 nvcc --shared -o native/lib/libmat_mul.so native/src/engine_v2.cu -Xcompiler -fPIC
+
+native/src/engine_v2.cu
 
 
 ## MuZero chess
@@ -13,9 +15,9 @@ Train MuZero vs Stockfish (fresh run, save checkpoint each iter):
 
 ```bash
 dart run example/tool/muzero_vs_stockfish_train.dart example/tools/stockfish \
-  --iters=3 --games=2 --epochs=2 --maxply=40 \
-  --sf-movetime=100 --sf-skill=0 \
-  --save=muzero_chess.bin --save-every=1
+  --iters=3 --games=2 --epochs=2 --maxply=10 \
+  --sf-movetime=1000 --sf-skill=20 \
+ --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
 ```
 
 Resume training from checkpoint:
@@ -109,7 +111,7 @@ With explicit hyperparameters:
 
 ```bash
 dart run example/mu_zero/overfit_chess_value_startpos.dart \
-  --epochs=300 --lr=0.05 --movetime=300 --tol=0.02
+  --epochs=300 --lr=0.05 --movetime=300 --tol=0.02 --logEvery=1
 ```
 
 This now also overfits the **policy head** on Stockfish's `bestmove` for

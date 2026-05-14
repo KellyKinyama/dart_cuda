@@ -264,11 +264,11 @@ Future<void> main(List<String> args) async {
       if (lv > 0) activeCount++;
 
       lScaled.backward();
-      // NOTE: The repo's autograd graph holds parent refs that interact
-      // poorly with eager disposal of the intermediates after backward.
-      // We intentionally let `tracker` go out of scope here; GPU buffers
-      // are reclaimed when Dart finalizes those tensor handles. This
-      // matches the pattern used in `example/face_embeddings.dart`.
+      // NOTE: This engine's autograd graph holds parent references in
+      // C++ closures that are unsafe to dispose eagerly. We let the
+      // tracker drop out of scope; GPU memory is reclaimed when the
+      // process exits. For a long-running training loop, prefer running
+      // a fixed (small) number of steps per process invocation.
       tracker.clear();
     }
 
@@ -297,7 +297,7 @@ Future<void> main(List<String> args) async {
         final emb = embedOne(patches, tk);
         embeddings.add(Float32List.fromList(emb.fetchData()));
         labels.add(v.value);
-        // Same disposal caveat as above; let the tracker drop out of scope.
+        // No dispose — see disposal note above.
       }
 
       // Build per-class index list within the val split.

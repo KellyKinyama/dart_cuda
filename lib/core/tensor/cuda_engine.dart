@@ -239,6 +239,27 @@ typedef _D_im2col =
       ffi.Pointer<ffi.Void> output,
     );
 
+typedef MatMulFunc =
+    ffi.Void Function(
+      ffi.Pointer<ffi.Float> a,
+      ffi.Pointer<ffi.Float> b,
+      ffi.Pointer<ffi.Float> c,
+      ffi.Int32 M,
+      ffi.Int32 N,
+      ffi.Int32 K,
+    );
+
+// This is the Dart-friendly version of the function.
+typedef MatMul =
+    void Function(
+      ffi.Pointer<ffi.Float> a,
+      ffi.Pointer<ffi.Float> b,
+      ffi.Pointer<ffi.Float> c,
+      int M,
+      int N,
+      int K,
+    );
+
 class CudaEngine {
   late ffi.DynamicLibrary _lib;
   late _D_create createTensor;
@@ -281,12 +302,14 @@ class CudaEngine {
   late DartComputeCost _computeCostMatrix; // <--- The internal definition
   late _D_reduce sumTensor;
   late _D_reduce meanTensor;
-  late _ZeroInitDart _tensorZeroInit;
-  late _XavierInitDart _tensorXavierInit;
+  // late _ZeroInitDart _tensorZeroInit;
+  // late _XavierInitDart _tensorXavierInit;
   // late _D_l2norm l2Normalize; // Add this
   late _D_l2norm layerNorm;
   late _D_im2col im2col;
   late _D_im2col col2im;
+
+  late final matMulCuda;
 
   CudaEngine() {
     _lib = ffi.DynamicLibrary.open(
@@ -374,13 +397,13 @@ class CudaEngine {
     // Mean reduction: returns a 1x1 Tensor pointer
     meanTensor = _lib.lookupFunction<_C_reduce, _D_reduce>('mean_tensor');
 
-    _tensorXavierInit = _lib.lookupFunction<_XavierInitC, _XavierInitDart>(
-      'tensor_xavier_init',
-    );
+    // _tensorXavierInit = _lib.lookupFunction<_XavierInitC, _XavierInitDart>(
+    //   'tensor_xavier_init',
+    // );
 
-    _tensorZeroInit = _lib.lookupFunction<_ZeroInitC, _ZeroInitDart>(
-      'tensor_zero_init',
-    );
+    // _tensorZeroInit = _lib.lookupFunction<_ZeroInitC, _ZeroInitDart>(
+    //   'tensor_zero_init',
+    // );
 
     // l2Normalize = _lib.lookupFunction<_C_l2norm, _D_l2norm>(
     //   'l2_normalize_tensor',
@@ -389,6 +412,10 @@ class CudaEngine {
     layerNorm = _lib.lookupFunction<_C_l2norm, _D_l2norm>('layer_norm_tensor');
     im2col = _lib.lookupFunction<_C_im2col, _D_im2col>('im2col_cuda');
     col2im = _lib.lookupFunction<_C_im2col, _D_im2col>('col2im_cuda');
+
+    // matMulCuda = _lib.lookupFunction<MatMulFunc, MatMul>(
+    //   'matrix_multiply_cuda',
+    // );
   }
 
   void computeCostMatrix(

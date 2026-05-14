@@ -43,7 +43,8 @@ import 'package:dart_cuda/core/layers/nn.dart' show Module;
 import 'package:dart_cuda/core/utils/persistence.dart';
 import 'package:dart_cuda/core/models/mu_zero/muzero_chess_player.dart'
     show ChessMuZeroAgent, MoveTokenizer, warmupCosineLR;
-import 'package:dart_cuda/core/models/mu_zero/muzero_chess_mcts.dart' show pickNextMoveMcts;
+import 'package:dart_cuda/core/models/mu_zero/muzero_chess_mcts.dart'
+    show pickNextMoveMcts;
 
 // ---------------------------------------------------------------------------
 // Hyperparameters (overridable via CLI)

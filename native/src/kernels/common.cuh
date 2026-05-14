@@ -8,6 +8,7 @@
 #include <vector>
 #include <unordered_set>
 #include <functional>
+#include <memory>
 #include <cmath>
 #include <curand_kernel.h>
 #include <cooperative_groups.h>
