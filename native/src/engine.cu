@@ -250,9 +250,17 @@ extern "C"
     {
         int i = blockIdx.x * blockDim.x + threadIdx.x;
         if (i < n) {
+            // Sign-preserving floor on |b| keeps 1/b and 1/b^2 finite if
+            // the broadcast scalar transiently approaches zero. Without
+            // this, a single small denominator can poison every grad with
+            // +/-Inf and Adam will then turn them into NaN at the next
+            // sqrtf(v_hat) step.
             float bv = b[0];
-            ga[i] += gout[i] / bv;
-            atomicAdd(&gb[0], -a[i] * gout[i] / (bv * bv));
+            const float floor_abs = 1e-20f;
+            if (fabsf(bv) < floor_abs) bv = copysignf(floor_abs, bv == 0.0f ? 1.0f : bv);
+            float inv_b = 1.0f / bv;
+            ga[i] += gout[i] * inv_b;
+            atomicAdd(&gb[0], -a[i] * gout[i] * inv_b * inv_b);
         }
     }
 
@@ -496,18 +504,33 @@ extern "C"
 
         for (int d = 0; d < D; d++)
         {
-            // Re-calculate sum components for this row/dim
-            float num = 0.0f;
-            float den = 0.0f;
             int limit = masked ? (t + 1) : T;
 
+            // --- Stable softmax: subtract per-(t,d) max before exp.
+            // The forward pass (aft_full_fwd) does this; the original
+            // backward did not, so any K[tp,d] + WB[t,tp] >> ~88 made
+            // expf overflow to +inf, num/den became 0/inf or inf/inf,
+            // and NaN propagated into every gradient. Mirror the forward
+            // exactly so the recomputed weights match bit-for-bit.
+            float max_val = -1e20f;
             for (int tp = 0; tp < limit; tp++)
             {
-                float weight = expf(K[tp * D + d] + WB[t * T + tp]);
+                float v = K[tp * D + d] + WB[t * T + tp];
+                if (v > max_val) max_val = v;
+            }
+
+            float num = 0.0f;
+            float den = 0.0f;
+            for (int tp = 0; tp < limit; tp++)
+            {
+                float weight = expf(K[tp * D + d] + WB[t * T + tp] - max_val);
                 num += weight * V[tp * D + d];
                 den += weight;
             }
 
+            // den >= 1 because the max term contributes exp(0) = 1, so
+            // 1/den is bounded; the historical 1e-9 guard is no longer
+            // needed but kept harmless.
             float den_inv = 1.0f / (den + 1e-9f);
             float ratio = num * den_inv;
 
@@ -523,7 +546,7 @@ extern "C"
             // 2. Gradients for K, V, and WB
             for (int tp = 0; tp < limit; tp++)
             {
-                float weight = expf(K[tp * D + d] + WB[t * T + tp]);
+                float weight = expf(K[tp * D + d] + WB[t * T + tp] - max_val);
 
                 // dL/dV
                 float dV = gO * sigQ * (weight * den_inv);

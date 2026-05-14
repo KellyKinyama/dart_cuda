@@ -4,27 +4,36 @@
 #pragma once
 
 
+// One-pass Welford mean/variance: numerically stable for wide rows and
+// large activation magnitudes. The naive two-pass formulation
+// `var = sum((x-mean)^2)/C` overflows to +inf when |x| is large enough
+// that x*x exceeds FLT_MAX/C, even though the true variance fits in
+// float; Welford keeps the running M2 in a normalized form that avoids
+// that overflow path.
+__device__ __forceinline__ void welford_row(const float *row, int C,
+                                            float &mean, float &var)
+{
+    mean = 0.0f;
+    float M2 = 0.0f;
+    for (int j = 0; j < C; j++) {
+        float x = row[j];
+        float delta = x - mean;
+        mean += delta / (float)(j + 1);
+        float delta2 = x - mean;
+        M2 += delta * delta2;
+    }
+    var = (C > 0) ? (M2 / (float)C) : 0.0f;
+}
+
 __global__ void layer_norm_fwd(float *a, float *out, int R, int C, float eps)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < R)
     {
-        // 1. Compute Mean
-        float sum = 0.0f;
-        for (int j = 0; j < C; j++)
-            sum += a[i * C + j];
-        float mean = sum / C;
+        float mean, var;
+        welford_row(a + i * C, C, mean, var);
+        float inv_std = rsqrtf(var + eps);
 
-        // 2. Compute Variance
-        float var = 0.0f;
-        for (int j = 0; j < C; j++)
-        {
-            float diff = a[i * C + j] - mean;
-            var += diff * diff;
-        }
-        float inv_std = 1.0f / sqrtf((var / C) + eps);
-
-        // 3. Normalize
         for (int j = 0; j < C; j++)
         {
             out[i * C + j] = (a[i * C + j] - mean) * inv_std;
@@ -37,19 +46,9 @@ __global__ void layer_norm_bwd(float *a, float *go, float *ga, int R, int C, flo
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < R)
     {
-        // 1. Recompute Mean and InvStd
-        float sum = 0.0f;
-        for (int j = 0; j < C; j++)
-            sum += a[i * C + j];
-        float mean = sum / C;
-
-        float var = 0.0f;
-        for (int j = 0; j < C; j++)
-        {
-            float diff = a[i * C + j] - mean;
-            var += diff * diff;
-        }
-        float inv_std = 1.0f / sqrtf((var / C) + eps);
+        float mean, var;
+        welford_row(a + i * C, C, mean, var);
+        float inv_std = rsqrtf(var + eps);
 
         // 2. Compute intermediate sums for the gradient
         // dl/dx = (1/C * inv_std) * [ C*dl/dy - sum(dl/dy) - y * sum(dl/dy * y) ]
@@ -77,21 +76,9 @@ __global__ void layernorm_fwd(float *x, float *gamma, float *beta, float *out, i
     int i = blockIdx.x; // One row per block
     if (i < R)
     {
-        // 1. Calculate Mean
-        float sum = 0;
-        for (int j = 0; j < C; j++)
-            sum += x[i * C + j];
-        float mean = sum / C;
-
-        // 2. Calculate Variance
-        float sq_diff_sum = 0;
-        for (int j = 0; j < C; j++)
-        {
-            float diff = x[i * C + j] - mean;
-            sq_diff_sum += diff * diff;
-        }
-        float var = sq_diff_sum / C;
-        float std_inv = 1.0f / sqrtf(var + eps);
+        float mean, var;
+        welford_row(x + i * C, C, mean, var);
+        float std_inv = rsqrtf(var + eps);
 
         // 3. Normalize and Scale/Shift
         for (int j = 0; j < C; j++)
@@ -107,19 +94,9 @@ __global__ void layernorm_bwd(float *x, float *gamma, float *go, float *gx, floa
     int i = blockIdx.x;
     if (i < R)
     {
-        // Recalculate stats for the row
-        float sum = 0;
-        for (int j = 0; j < C; j++)
-            sum += x[i * C + j];
-        float mean = sum / C;
-
-        float sq_diff_sum = 0;
-        for (int j = 0; j < C; j++)
-        {
-            float diff = x[i * C + j] - mean;
-            sq_diff_sum += diff * diff;
-        }
-        float std_inv = 1.0f / sqrtf((sq_diff_sum / C) + eps);
+        float mean, var;
+        welford_row(x + i * C, C, mean, var);
+        float std_inv = rsqrtf(var + eps);
 
         float dl_dxhat_sum = 0;
         float dl_dxhat_xhat_sum = 0;

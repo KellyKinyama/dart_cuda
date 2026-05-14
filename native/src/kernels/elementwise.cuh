@@ -167,32 +167,125 @@ __global__ void mul_bwd(float *da, float *db, float *go, float *ga, float *gb, i
         }
     }
 }
+// ---------------------------------------------------------------------
+// Numerically-safe division.
+// `safe_recip(b)` returns 1/b but floors |b| at 1e-20 (sign-preserving).
+// This bounds 1/b and 1/b^2 to ~1e40 instead of overflowing to +inf when
+// the divisor collapses near zero. The result is still wrong in absolute
+// terms when the user actually divides by zero, but it stays *finite*
+// so a single rogue denominator can't poison every downstream gradient
+// with NaN. Caller is still responsible for keeping denominators away
+// from zero in steady state.
+// ---------------------------------------------------------------------
+__device__ __forceinline__ float safe_recip(float b)
+{
+    const float floor_abs = 1e-20f;
+    float ab = fabsf(b);
+    float bs = (ab < floor_abs) ? copysignf(floor_abs, b == 0.0f ? 1.0f : b) : b;
+    return 1.0f / bs;
+}
+
 __global__ void div_fwd(float *a, float *b, float *out, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
-        out[i] = a[i] / b[i];
+        out[i] = a[i] * safe_recip(b[i]);
 }
 __global__ void div_bwd(float *da, float *db, float *go, float *ga, float *gb, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
     {
-        atomicAdd(&ga[i], go[i] / db[i]);
-        atomicAdd(&gb[i], -go[i] * da[i] / (db[i] * db[i]));
+        float inv_b = safe_recip(db[i]);
+        atomicAdd(&ga[i], go[i] * inv_b);
+        atomicAdd(&gb[i], -go[i] * da[i] * inv_b * inv_b);
     }
 }
+
+// ---------------------------------------------------------------------
+// pow(x, e) — NaN-free formulation.
+//
+// `powf(x, e)` returns NaN whenever x < 0 and e is not an exact integer.
+// In a deep-learning pipeline this surfaces silently the moment any
+// caller does `t.pow(0.5)` on a tensor that briefly contains negatives
+// (very common: pre-activations of a residual branch, etc.).
+// Likewise the backward kernel computes `e * x^(e-1) * go`, which blows
+// up to +inf at x == 0 whenever e < 1 (e.g. sqrt).
+//
+// Strategy:
+//   * If `e` rounds to a whole integer (within 1e-6), evaluate by
+//     repeated multiplication. This is exact for the typical cases
+//     (square, cube, x^-1 ...) and never produces NaN.
+//   * Otherwise, treat the function as undefined for x <= 0 and return
+//     0 (forward and backward) instead of NaN/Inf. This is the standard
+//     deep-learning convention (PyTorch returns NaN, but contributors
+//     typically wrap with `clamp_min`; we just bake the safe branch in).
+// ---------------------------------------------------------------------
+__device__ __forceinline__ float intpow(float base, int e)
+{
+    // Computes base^e for any signed integer e, no NaN possible.
+    if (e == 0) return 1.0f;
+    bool neg_exp = (e < 0);
+    if (neg_exp) e = -e;
+    float result = 1.0f;
+    float b = base;
+    while (e > 0) {
+        if (e & 1) result *= b;
+        b *= b;
+        e >>= 1;
+    }
+    if (neg_exp) {
+        // base^(-e) = 1 / base^e; if base==0 this is undefined -> 0.
+        result = (result == 0.0f) ? 0.0f : 1.0f / result;
+    }
+    return result;
+}
+
+__device__ __forceinline__ bool is_integer_exp(float e, int *out_int)
+{
+    int rounded = __float2int_rn(e);
+    if (fabsf(e - (float)rounded) < 1e-6f) {
+        *out_int = rounded;
+        return true;
+    }
+    return false;
+}
+
 __global__ void pow_fwd(float *a, float exp, float *out, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
-        out[i] = powf(a[i], exp);
+    {
+        float x = a[i];
+        int ie;
+        if (is_integer_exp(exp, &ie)) {
+            out[i] = intpow(x, ie);
+        } else {
+            out[i] = (x > 0.0f) ? powf(x, exp) : 0.0f;
+        }
+    }
 }
 __global__ void pow_bwd(float *da, float exp, float *go, float *ga, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
-        atomicAdd(&ga[i], exp * powf(da[i], exp - 1.0f) * go[i]);
+    {
+        float x = da[i];
+        int ie;
+        float deriv;
+        if (is_integer_exp(exp, &ie)) {
+            // d/dx x^ie = ie * x^(ie-1). At x==0 with ie-1 < 0 this is
+            // undefined; intpow returns 0 in that case (safe).
+            deriv = (float)ie * intpow(x, ie - 1);
+        } else if (x > 0.0f) {
+            deriv = exp * powf(x, exp - 1.0f);
+        } else {
+            // x <= 0 with non-integer exp: forward is defined as 0 and
+            // gradient is taken to be 0 (matches the forward branch).
+            return;
+        }
+        atomicAdd(&ga[i], deriv * go[i]);
+    }
 }
 __global__ void relu_fwd(float *a, float *out, int n)
 {
