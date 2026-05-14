@@ -2,6 +2,7 @@
 // unrolled training step. Designed to be small and reusable across the
 // `train_grid_world.dart` / `train_cart_pole.dart` scripts.
 
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:dart_cuda/core/optimizers/adam.dart';
@@ -220,23 +221,48 @@ int selectAction(
 }
 
 /// Run one episode collecting transitions. Returns the trajectory and
-/// the total undiscounted return.
-Trajectory rolloutEpisode({
+/// the total undiscounted return. If [liveLabel] is non-null, renders
+/// the env in-place each step (ANSI clear + redraw) with [liveDelayMs]
+/// between frames.
+Future<Trajectory> rolloutEpisode({
   required Env env,
   required MuZeroAgent agent,
   required double epsilon,
   required math.Random rng,
   int? maxSteps,
-}) {
+  String? liveLabel,
+  int liveDelayMs = 30,
+}) async {
   final traj = Trajectory();
   List<double> obs = env.reset();
-  for (int t = 0; ; t++) {
-    if (maxSteps != null && t >= maxSteps) break;
-    final a = selectAction(agent, obs, epsilon, rng);
-    final res = env.step(a);
-    traj.add(Transition(obs, a, res.reward, res.done));
-    obs = res.observation;
-    if (res.done) break;
+  final live = liveLabel != null;
+  if (live) stdout.write(Ansi.hideCursor);
+  try {
+    for (int t = 0; ; t++) {
+      if (maxSteps != null && t >= maxSteps) break;
+      if (live) {
+        stdout.write(Ansi.clearScreen);
+        stdout.writeln('=== $liveLabel  step $t ===');
+        stdout.write(env.render());
+        await stdout.flush();
+      }
+      final a = selectAction(agent, obs, epsilon, rng);
+      final res = env.step(a);
+      traj.add(Transition(obs, a, res.reward, res.done));
+      obs = res.observation;
+      if (live) await Future<void>.delayed(Duration(milliseconds: liveDelayMs));
+      if (res.done) {
+        if (live) {
+          stdout.write(Ansi.clearScreen);
+          stdout.writeln('=== $liveLabel  step ${t + 1} (terminal) ===');
+          stdout.write(env.render());
+          await stdout.flush();
+        }
+        break;
+      }
+    }
+  } finally {
+    if (live) stdout.write(Ansi.showCursor);
   }
   return traj;
 }

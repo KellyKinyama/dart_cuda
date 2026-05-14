@@ -28,6 +28,8 @@ void main(List<String> args) async {
   final epsilonEnd = flags.doubleOr('epsilon-end', 0.05);
   final evalEvery = flags.intOr('eval-every', 50);
   final render = !flags.has('no-render');
+  final renderTrain = flags.has('render-train');
+  final frameMs = flags.intOr('frame-ms', 30);
 
   print('--- MuZero RL: CartPole ---');
   print(
@@ -49,7 +51,14 @@ void main(List<String> args) async {
   final returns = <double>[];
   for (int ep = 1; ep <= episodes; ep++) {
     final eps = _linearAnneal(ep, episodes, epsilonStart, epsilonEnd);
-    final traj = rolloutEpisode(env: env, agent: agent, epsilon: eps, rng: rng);
+    final traj = await rolloutEpisode(
+      env: env,
+      agent: agent,
+      epsilon: eps,
+      rng: rng,
+      liveLabel: renderTrain ? 'ep $ep  ε=${eps.toStringAsFixed(2)}' : null,
+      liveDelayMs: frameMs,
+    );
     buffer.add(traj);
     returns.add(traj.returnSum);
 
