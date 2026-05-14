@@ -8,6 +8,65 @@
 
 #define DLLEXPORT __attribute__((visibility("default")))
 
+// ---------------------------------------------------------------------
+// Numerical-stability helpers (mirror of kernels/elementwise.cuh +
+// kernels/layernorm_embed.cuh in the engine.cu build). Kept inline here
+// because engine_v2.cu is a single self-contained translation unit.
+// ---------------------------------------------------------------------
+
+// Sign-preserving floor on |b|: keeps 1/b and 1/b^2 finite when the
+// divisor briefly approaches zero, instead of overflowing to +-Inf and
+// poisoning every downstream gradient with NaN.
+__device__ __forceinline__ float safe_recip(float b)
+{
+    const float floor_abs = 1e-20f;
+    if (fabsf(b) < floor_abs) b = copysignf(floor_abs, b == 0.0f ? 1.0f : b);
+    return 1.0f / b;
+}
+
+// Integer power by repeated squaring -- exact, never NaN. Handles any
+// signed integer exponent; base==0 with negative exponent returns 0.
+__device__ __forceinline__ float intpow(float base, int e)
+{
+    if (e == 0) return 1.0f;
+    bool neg_exp = (e < 0);
+    if (neg_exp) e = -e;
+    float result = 1.0f;
+    float b = base;
+    while (e > 0) {
+        if (e & 1) result *= b;
+        b *= b;
+        e >>= 1;
+    }
+    if (neg_exp) result = (result == 0.0f) ? 0.0f : 1.0f / result;
+    return result;
+}
+
+__device__ __forceinline__ bool is_integer_exp(float e, int *out_int)
+{
+    int rounded = __float2int_rn(e);
+    if (fabsf(e - (float)rounded) < 1e-6f) { *out_int = rounded; return true; }
+    return false;
+}
+
+// One-pass Welford mean/variance: stable for wide rows and large
+// activation magnitudes where the naive sum((x-mean)^2)/C path can
+// overflow to +inf and silently zero out the gradient.
+__device__ __forceinline__ void welford_row(const float *row, int C,
+                                            float &mean, float &var)
+{
+    mean = 0.0f;
+    float M2 = 0.0f;
+    for (int j = 0; j < C; j++) {
+        float x = row[j];
+        float delta = x - mean;
+        mean += delta / (float)(j + 1);
+        float delta2 = x - mean;
+        M2 += delta * delta2;
+    }
+    var = (C > 0) ? (M2 / (float)C) : 0.0f;
+}
+
 // __global__ void l2_normalize_fwd(float *a, float *out, int R, int C, float eps)
 // {
 //     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -62,22 +121,10 @@ __global__ void layer_norm_fwd(float *a, float *out, int R, int C, float eps)
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < R)
     {
-        // 1. Compute Mean
-        float sum = 0.0f;
-        for (int j = 0; j < C; j++)
-            sum += a[i * C + j];
-        float mean = sum / C;
+        float mean, var;
+        welford_row(a + i * C, C, mean, var);
+        float inv_std = rsqrtf(var + eps);
 
-        // 2. Compute Variance
-        float var = 0.0f;
-        for (int j = 0; j < C; j++)
-        {
-            float diff = a[i * C + j] - mean;
-            var += diff * diff;
-        }
-        float inv_std = 1.0f / sqrtf((var / C) + eps);
-
-        // 3. Normalize
         for (int j = 0; j < C; j++)
         {
             out[i * C + j] = (a[i * C + j] - mean) * inv_std;
@@ -90,19 +137,9 @@ __global__ void layer_norm_bwd(float *a, float *go, float *ga, int R, int C, flo
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < R)
     {
-        // 1. Recompute Mean and InvStd
-        float sum = 0.0f;
-        for (int j = 0; j < C; j++)
-            sum += a[i * C + j];
-        float mean = sum / C;
-
-        float var = 0.0f;
-        for (int j = 0; j < C; j++)
-        {
-            float diff = a[i * C + j] - mean;
-            var += diff * diff;
-        }
-        float inv_std = 1.0f / sqrtf((var / C) + eps);
+        float mean, var;
+        welford_row(a + i * C, C, mean, var);
+        float inv_std = rsqrtf(var + eps);
 
         // 2. Compute intermediate sums for the gradient
         // dl/dx = (1/C * inv_std) * [ C*dl/dy - sum(dl/dy) - y * sum(dl/dy * y) ]
@@ -176,28 +213,53 @@ __global__ void div_fwd(float *a, float *b, float *out, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
-        out[i] = a[i] / b[i];
+        out[i] = a[i] * safe_recip(b[i]);
 }
 __global__ void div_bwd(float *da, float *db, float *go, float *ga, float *gb, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
     {
-        atomicAdd(&ga[i], go[i] / db[i]);
-        atomicAdd(&gb[i], -go[i] * da[i] / (db[i] * db[i]));
+        float inv_b = safe_recip(db[i]);
+        atomicAdd(&ga[i], go[i] * inv_b);
+        atomicAdd(&gb[i], -go[i] * da[i] * inv_b * inv_b);
     }
 }
 __global__ void pow_fwd(float *a, float exp, float *out, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
-        out[i] = powf(a[i], exp);
+    {
+        float x = a[i];
+        int ie;
+        if (is_integer_exp(exp, &ie)) {
+            out[i] = intpow(x, ie);
+        } else {
+            // powf(x<0, frac) is NaN; treat as 0 to match the gradient
+            // branch below and keep the pipeline finite.
+            out[i] = (x > 0.0f) ? powf(x, exp) : 0.0f;
+        }
+    }
 }
 __global__ void pow_bwd(float *da, float exp, float *go, float *ga, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n)
-        atomicAdd(&ga[i], exp * powf(da[i], exp - 1.0f) * go[i]);
+    {
+        float x = da[i];
+        int ie;
+        float deriv;
+        if (is_integer_exp(exp, &ie)) {
+            // d/dx x^ie = ie * x^(ie-1); intpow handles x==0 with
+            // negative exponent by returning 0 (no Inf, no NaN).
+            deriv = (float)ie * intpow(x, ie - 1);
+        } else if (x > 0.0f) {
+            deriv = exp * powf(x, exp - 1.0f);
+        } else {
+            return; // x <= 0 with non-integer exp: gradient defined as 0
+        }
+        atomicAdd(&ga[i], deriv * go[i]);
+    }
 }
 __global__ void relu_fwd(float *a, float *out, int n)
 {
@@ -486,21 +548,9 @@ __global__ void layernorm_fwd(float *x, float *gamma, float *beta, float *out, i
     int i = blockIdx.x; // One row per block
     if (i < R)
     {
-        // 1. Calculate Mean
-        float sum = 0;
-        for (int j = 0; j < C; j++)
-            sum += x[i * C + j];
-        float mean = sum / C;
-
-        // 2. Calculate Variance
-        float sq_diff_sum = 0;
-        for (int j = 0; j < C; j++)
-        {
-            float diff = x[i * C + j] - mean;
-            sq_diff_sum += diff * diff;
-        }
-        float var = sq_diff_sum / C;
-        float std_inv = 1.0f / sqrtf(var + eps);
+        float mean, var;
+        welford_row(x + i * C, C, mean, var);
+        float std_inv = rsqrtf(var + eps);
 
         // 3. Normalize and Scale/Shift
         for (int j = 0; j < C; j++)
@@ -516,19 +566,9 @@ __global__ void layernorm_bwd(float *x, float *gamma, float *go, float *gx, floa
     int i = blockIdx.x;
     if (i < R)
     {
-        // Recalculate stats for the row
-        float sum = 0;
-        for (int j = 0; j < C; j++)
-            sum += x[i * C + j];
-        float mean = sum / C;
-
-        float sq_diff_sum = 0;
-        for (int j = 0; j < C; j++)
-        {
-            float diff = x[i * C + j] - mean;
-            sq_diff_sum += diff * diff;
-        }
-        float std_inv = 1.0f / sqrtf((sq_diff_sum / C) + eps);
+        float mean, var;
+        welford_row(x + i * C, C, mean, var);
+        float std_inv = rsqrtf(var + eps);
 
         float dl_dxhat_sum = 0;
         float dl_dxhat_xhat_sum = 0;
@@ -1186,14 +1226,24 @@ extern "C"
 
         for (int d = 0; d < D; d++)
         {
-            // Re-calculate sum components for this row/dim
-            float num = 0.0f;
-            float den = 0.0f;
             int limit = masked ? (t + 1) : T;
 
+            // Stable softmax: subtract per-(t,d) max before exp, matching
+            // aft_full_fwd. Without it, large K[tp,d]+WB[t,tp] (>~88)
+            // overflows expf to +inf, num/den becomes inf/inf, and NaN
+            // propagates into every gradient.
+            float max_val = -1e20f;
             for (int tp = 0; tp < limit; tp++)
             {
-                float weight = expf(K[tp * D + d] + WB[t * T + tp]);
+                float v = K[tp * D + d] + WB[t * T + tp];
+                if (v > max_val) max_val = v;
+            }
+
+            float num = 0.0f;
+            float den = 0.0f;
+            for (int tp = 0; tp < limit; tp++)
+            {
+                float weight = expf(K[tp * D + d] + WB[t * T + tp] - max_val);
                 num += weight * V[tp * D + d];
                 den += weight;
             }
@@ -1213,7 +1263,7 @@ extern "C"
             // 2. Gradients for K, V, and WB
             for (int tp = 0; tp < limit; tp++)
             {
-                float weight = expf(K[tp * D + d] + WB[t * T + tp]);
+                float weight = expf(K[tp * D + d] + WB[t * T + tp] - max_val);
 
                 // dL/dV
                 float dV = gO * sigQ * (weight * den_inv);
