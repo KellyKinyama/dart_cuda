@@ -30,6 +30,7 @@ void main(List<String> args) async {
   final render = !flags.has('no-render');
   final renderTrain = flags.has('render-train');
   final frameMs = flags.intOr('frame-ms', 30);
+  final playEpisodes = flags.intOr('play', 3);
 
   print('--- MuZero RL: CartPole ---');
   print(
@@ -105,7 +106,25 @@ void main(List<String> args) async {
   }
 
   print('\n--- Final greedy rollout ---');
-  if (render) await _visualRollout(env, agent, label: 'final');
+  if (render && playEpisodes > 0) {
+    for (int i = 1; i <= playEpisodes; i++) {
+      final playEnv = CartPole(maxSteps: 200, seed: seed + 100 + i);
+      final playRng = math.Random(seed + 200 + i);
+      final traj = await rolloutEpisode(
+        env: playEnv,
+        agent: agent,
+        epsilon: 0.0,
+        rng: playRng,
+        liveLabel: 'play $i/$playEpisodes',
+        liveDelayMs: frameMs,
+      );
+      print(
+        'play $i  len=${traj.length}  '
+        'return=${traj.returnSum.toStringAsFixed(0)}',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    }
+  }
 }
 
 Future<void> _visualRollout(
