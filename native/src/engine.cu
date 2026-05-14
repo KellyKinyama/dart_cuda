@@ -718,12 +718,15 @@ extern "C"
         Tensor *out = make_tensor(x->rows, x->cols);
         out->_children = {x, gamma, beta};
 
-        layernorm_fwd<<<x->rows, 1>>>(x->data_gpu, gamma->data_gpu, beta->data_gpu, out->data_gpu, x->rows, x->cols, eps);
+        // Block-cooperative: one block per row, 256 threads cooperate on
+        // the column-wise mean/variance reductions. Previously launched
+        // <<<x->rows, 1>>>, which left ~99% of the GPU idle.
+        layernorm_fwd<<<x->rows, 256>>>(x->data_gpu, gamma->data_gpu, beta->data_gpu, out->data_gpu, x->rows, x->cols, eps);
 
         // Added 'beta' to the capture list below [out, x, gamma, beta, eps]
         out->_backward = [out, x, gamma, beta, eps]()
         {
-            layernorm_bwd<<<x->rows, 1>>>(
+            layernorm_bwd<<<x->rows, 256>>>(
                 x->data_gpu,
                 gamma->data_gpu,
                 out->grad_gpu,
@@ -767,6 +770,18 @@ extern "C"
     // Note: In a real engine, you'd pass epsilon from Dart. Hardcoding 0.1 for now.
     const float GLOBAL_EPSILON = 0.1f;
 
+    // GPU-side mean reduction: avoids the previous D->H copy of T floats,
+    // CPU sum, and H->D copy of the scalar mean.
+    __global__ void ce_mean_reduce(const float *losses, float *out, int T)
+    {
+        __shared__ float smem[32];
+        float local = 0.0f;
+        for (int i = threadIdx.x; i < T; i += blockDim.x)
+            local += losses[i];
+        float total = block_reduce_sum_bcast(local, smem);
+        if (threadIdx.x == 0) out[0] = total / (float)T;
+    }
+
     void *cross_entropy_loss(void *lh, int *h_targets, int T, int V)
     {
         Tensor *logits = (Tensor *)lh;
@@ -783,14 +798,12 @@ extern "C"
         // Launch with 1 block per row, 128 threads per block
         cross_entropy_fwd_hyper<<<T, 128>>>(logits->data_gpu, d_targets, d_losses, T, V, GLOBAL_EPSILON);
 
-        // Use a basic reduction to get mean (or copy back if T is small)
-        std::vector<float> h_losses(T);
-        cudaMemcpy(h_losses.data(), d_losses, T * sizeof(float), cudaMemcpyDeviceToHost);
-        float total_loss = 0;
-        for (float l : h_losses)
-            total_loss += l;
-        float mean_loss = total_loss / T;
-        cudaMemcpy(out->data_gpu, &mean_loss, sizeof(float), cudaMemcpyHostToDevice);
+        // Reduce on the device directly into out->data_gpu (no D->H/H->D
+        // round-trip). d_losses is no longer needed by the backward pass,
+        // so free it immediately -- matches the previous lifetime exactly.
+        ce_mean_reduce<<<1, 256>>>(d_losses, out->data_gpu, T);
+        cudaDeviceSynchronize();
+        cudaFree(d_losses);
 
         out->_backward = [out, logits, d_targets, T, V]()
         {
@@ -803,7 +816,6 @@ extern "C"
             cudaFree(d_targets);
         };
 
-        cudaFree(d_losses);
         return (void *)out;
     }
 
@@ -972,30 +984,45 @@ extern "C"
         return (void *)out;
     }
 
+    // Block-cooperative softmax: one block per row, 256 threads cooperate
+    // on the row-wide max/sum reductions. The previous version ran one
+    // *thread* per row, doing two/three sequential passes over V -- a
+    // catastrophic bottleneck for vocab/logit-sized rows.
     __global__ void softmax_fwd_kernel(float *logits, float *out, int T, int V)
     {
-        int t = blockIdx.x * blockDim.x + threadIdx.x;
-        if (t < T)
-        {
-            float max_val = -1e30f;
-            for (int v = 0; v < V; v++)
-            {
-                if (logits[t * V + v] > max_val)
-                    max_val = logits[t * V + v];
-            }
+        int t = blockIdx.x;
+        if (t >= T) return;
 
-            float sum = 0.0f;
-            for (int v = 0; v < V; v++)
-            {
-                out[t * V + v] = expf(logits[t * V + v] - max_val);
-                sum += out[t * V + v];
-            }
+        __shared__ float smem[32];
+        __shared__ float s_max, s_sum;
 
-            for (int v = 0; v < V; v++)
-            {
-                out[t * V + v] /= (sum + 1e-9f);
-            }
+        const float *row_in  = logits + t * V;
+        float       *row_out = out    + t * V;
+
+        // Pass 1: max
+        float local_max = -1e30f;
+        for (int v = threadIdx.x; v < V; v += blockDim.x)
+            local_max = fmaxf(local_max, row_in[v]);
+        float mx = block_reduce_max_bcast(local_max, smem);
+        if (threadIdx.x == 0) s_max = mx;
+        __syncthreads();
+        float row_max = s_max;
+
+        // Pass 2: write exp(x - max), accumulate sum
+        float local_sum = 0.0f;
+        for (int v = threadIdx.x; v < V; v += blockDim.x) {
+            float e = expf(row_in[v] - row_max);
+            row_out[v] = e;
+            local_sum += e;
         }
+        float sum = block_reduce_sum_bcast(local_sum, smem);
+        if (threadIdx.x == 0) s_sum = sum + 1e-9f;
+        __syncthreads();
+        float inv_sum = 1.0f / s_sum;
+
+        // Pass 3: normalize
+        for (int v = threadIdx.x; v < V; v += blockDim.x)
+            row_out[v] *= inv_sum;
     }
 
     // Exported Wrapper
@@ -1005,8 +1032,8 @@ extern "C"
         Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
 
-        // Launch row-wise (one thread per query/row)
-        softmax_fwd_kernel<<<(a->rows + 255) / 256, 256>>>(a->data_gpu, out->data_gpu, a->rows, a->cols);
+        // One block per row.
+        softmax_fwd_kernel<<<a->rows, 256>>>(a->data_gpu, out->data_gpu, a->rows, a->cols);
 
         // Softmax backward is slightly complex; if you only use it for cost matrix,
         // you can leave it empty, but here is the correct derivation:
@@ -1127,14 +1154,16 @@ extern "C"
         Tensor *out = make_tensor(R, C);
         out->_children = {a};
 
-        int threads = 256;
-        int blocks = (R + threads - 1) / threads;
+        // Block-cooperative: one block per row, 256 threads/block.
+        // Previously launched (R+255)/256 blocks of 256 threads with
+        // each thread handling a whole row sequentially -- this got
+        // a single warp's worth of parallelism per row. The new layout
+        // gets 256x parallelism per row.
+        layer_norm_fwd<<<R, 256>>>(a->data_gpu, out->data_gpu, R, C, eps);
 
-        layer_norm_fwd<<<blocks, threads>>>(a->data_gpu, out->data_gpu, R, C, eps);
-
-        out->_backward = [out, a, R, C, eps, blocks, threads]()
+        out->_backward = [out, a, R, C, eps]()
         {
-            layer_norm_bwd<<<blocks, threads>>>(
+            layer_norm_bwd<<<R, 256>>>(
                 a->data_gpu, out->grad_gpu, a->grad_gpu, R, C, eps);
         };
         return (void *)out;

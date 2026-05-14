@@ -20,6 +20,59 @@
 
 namespace cg = cooperative_groups;
 
+// ---------------------------------------------------------------------
+// Block-wide reduction helpers used by layernorm/softmax/etc.
+// Each takes a `smem` scratch array of at least 32 floats provided by
+// the caller (one slot per warp). The "_bcast" variants leave the final
+// reduced value in smem[0] so every thread in the block can read it.
+// ---------------------------------------------------------------------
+__device__ __forceinline__ float warp_reduce_sum(float v)
+{
+    for (int off = 16; off > 0; off /= 2)
+        v += __shfl_down_sync(0xffffffff, v, off);
+    return v;
+}
+__device__ __forceinline__ float warp_reduce_max(float v)
+{
+    for (int off = 16; off > 0; off /= 2)
+        v = fmaxf(v, __shfl_down_sync(0xffffffff, v, off));
+    return v;
+}
+
+__device__ __forceinline__ float block_reduce_sum_bcast(float v, float *smem)
+{
+    int lane = threadIdx.x & 31;
+    int wid  = threadIdx.x >> 5;
+    v = warp_reduce_sum(v);
+    if (lane == 0) smem[wid] = v;
+    __syncthreads();
+    int nwarps = (blockDim.x + 31) >> 5;
+    if (wid == 0) {
+        v = (lane < nwarps) ? smem[lane] : 0.0f;
+        v = warp_reduce_sum(v);
+        if (lane == 0) smem[0] = v;
+    }
+    __syncthreads();
+    return smem[0];
+}
+
+__device__ __forceinline__ float block_reduce_max_bcast(float v, float *smem)
+{
+    int lane = threadIdx.x & 31;
+    int wid  = threadIdx.x >> 5;
+    v = warp_reduce_max(v);
+    if (lane == 0) smem[wid] = v;
+    __syncthreads();
+    int nwarps = (blockDim.x + 31) >> 5;
+    if (wid == 0) {
+        v = (lane < nwarps) ? smem[lane] : -1e30f;
+        v = warp_reduce_max(v);
+        if (lane == 0) smem[0] = v;
+    }
+    __syncthreads();
+    return smem[0];
+}
+
 // __global__ void l2_normalize_fwd(float *a, float *out, int R, int C, float eps)
 // {
 //     int i = blockIdx.x * blockDim.x + threadIdx.x;
