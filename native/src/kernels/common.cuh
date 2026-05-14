@@ -7,8 +7,10 @@
 #include <cstdio>
 #include <vector>
 #include <unordered_set>
+#include <unordered_map>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <cmath>
 #include <curand_kernel.h>
 #include <cooperative_groups.h>

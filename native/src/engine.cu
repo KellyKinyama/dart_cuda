@@ -15,12 +15,30 @@
 extern "C"
 {
 
+    // Forward declarations for the registry / ChildRef machinery defined
+    // below. The autograd graph used to store raw `Tensor *` pointers in
+    // `_children`, which made it impossible for `destroy_tensor` to free
+    // the C++ struct safely (a still-live parent could segfault on the
+    // next `backward()` walk). We now wrap each child in a `ChildRef`
+    // that holds a `shared_ptr<Tensor>`, so a parent keeps its inputs
+    // alive even after the Dart wrapper has been disposed.
+    struct Tensor;
+    static std::shared_ptr<Tensor> shared_from(Tensor *t);
+
+    struct ChildRef
+    {
+        std::shared_ptr<Tensor> ptr;
+        ChildRef() = default;
+        ChildRef(Tensor *t) : ptr(shared_from(t)) {}
+        ChildRef(std::shared_ptr<Tensor> sp) : ptr(std::move(sp)) {}
+    };
+
     struct Tensor
     {
         float *data_gpu, *grad_gpu;
         int rows, cols, size;
         bool is_view = false; // Default: owns memory
-        std::vector<Tensor *> _children;
+        std::vector<ChildRef> _children;
         std::function<void()> _backward = []() {};
 
         Tensor(int r, int c) : rows(r), cols(c), size(r * c)
@@ -28,28 +46,52 @@ extern "C"
             cudaMalloc(&data_gpu, size * sizeof(float));
             cudaMalloc(&grad_gpu, size * sizeof(float));
             cudaMemset(grad_gpu, 0, size * sizeof(float));
-            static long __nt=0; __nt++;
-            if (__nt%500==0) {
-                size_t f=0,t=0; cudaMemGetInfo(&f,&t);
-                // fprintf(stderr,"[T#%ld free=%zu MiB]\n",__nt,f/(1024*1024));
-                fflush(stderr);
-            }
         }
 
         ~Tensor()
         {
-            // ONLY free if this isn't a non-owning view
-            // (Though your current slice IS an owner, this protects you elsewhere)
             if (!is_view)
             {
-                cudaFree(data_gpu);
-                cudaFree(grad_gpu);
+                if (data_gpu) cudaFree(data_gpu);
+                if (grad_gpu) cudaFree(grad_gpu);
+                data_gpu = nullptr;
+                grad_gpu = nullptr;
             }
         }
     };
-    DLLEXPORT void *create_tensor(int r, int c, float *d)
+
+    // Process-wide registry: every handed-out handle (raw `Tensor *`) is
+    // pinned by a shared_ptr in this map. `destroy_tensor` simply erases
+    // the entry; the struct dies (running `~Tensor`) when no parent's
+    // `_children` still holds a shared_ptr to it.
+    static std::unordered_map<Tensor *, std::shared_ptr<Tensor>> g_tensor_registry;
+    static std::mutex g_registry_mutex;
+
+    static std::shared_ptr<Tensor> shared_from(Tensor *t)
+    {
+        if (!t) return nullptr;
+        std::lock_guard<std::mutex> lock(g_registry_mutex);
+        auto it = g_tensor_registry.find(t);
+        if (it != g_tensor_registry.end()) return it->second;
+        // Aliasing fallback (non-owning). Shouldn't normally happen for
+        // tensors created through the wrappers below; views (which share
+        // another tensor's handle) are the main reason this path exists.
+        return std::shared_ptr<Tensor>(std::shared_ptr<Tensor>{}, t);
+    }
+
+    // Allocate a Tensor and pin it in the registry. Returns the raw
+    // pointer (== handle). Use this everywhere instead of `make_tensor(...)`.
+    static Tensor *make_tensor(int r, int c)
     {
         Tensor *t = new Tensor(r, c);
+        std::lock_guard<std::mutex> lock(g_registry_mutex);
+        g_tensor_registry[t] = std::shared_ptr<Tensor>(t);
+        return t;
+    }
+
+    DLLEXPORT void *create_tensor(int r, int c, float *d)
+    {
+        Tensor *t = make_tensor(r, c);
         if (d)
             cudaMemcpy(t->data_gpu, d, t->size * sizeof(float), cudaMemcpyHostToDevice);
         return (void *)t;
@@ -58,23 +100,24 @@ extern "C"
     {
         if (!h)
             return;
-        // NOTE: We deliberately do NOT `delete t` here. The C++ autograd
-        // graph stores raw `Tensor*` pointers in `_children` and captures
-        // raw pointers in `_backward` closures. Other tensors may still
-        // reference this struct through those pointers; freeing the struct
-        // would leave them dangling and segfault on the next backward()
-        // walk. Freeing the GPU buffers alone is the conservative choice
-        // (small per-tensor host leak, but stable). A real fix requires
-        // making `_children` use shared ownership (e.g. shared_ptr) so the
-        // struct can be freed safely.
         Tensor *t = (Tensor *)h;
-        if (!t->is_view)
+        // Views share another tensor's handle/buffers and must never be
+        // freed via this path. The Dart wrapper already short-circuits
+        // `dispose()` on views, but be defensive.
+        if (t->is_view) return;
+        std::shared_ptr<Tensor> kept;
         {
-            cudaFree(t->data_gpu);
-            cudaFree(t->grad_gpu);
-            t->data_gpu = nullptr;
-            t->grad_gpu = nullptr;
+            std::lock_guard<std::mutex> lock(g_registry_mutex);
+            auto it = g_tensor_registry.find(t);
+            if (it == g_tensor_registry.end()) return;
+            // Move the shared_ptr out so it can be released *outside* the
+            // lock — `~Tensor` may transitively destroy other tensors,
+            // and we don't want to recursively re-enter the mutex.
+            kept = std::move(it->second);
+            g_tensor_registry.erase(it);
         }
+        // `kept` goes out of scope here; the struct is freed iff no
+        // autograd parent still holds a shared_ptr to it.
     }
     DLLEXPORT void get_tensor_data(void *h, float *b)
     {
@@ -126,8 +169,8 @@ extern "C"
             Tensor *v = top.first;
             if (top.second < v->_children.size())
             {
-                Tensor *c = v->_children[top.second++];
-                if (visited.insert(c).second)
+                Tensor *c = v->_children[top.second++].ptr.get();
+                if (c && visited.insert(c).second)
                 {
                     stack.push_back({c, 0});
                 }
@@ -216,7 +259,7 @@ extern "C"
     DLLEXPORT void *add_tensor_scalar(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a, b};
         int n = a->size;
         int blocks = (n + 255) / 256;
@@ -230,7 +273,7 @@ extern "C"
     DLLEXPORT void *sub_tensor_scalar(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a, b};
         int n = a->size;
         int blocks = (n + 255) / 256;
@@ -244,7 +287,7 @@ extern "C"
     DLLEXPORT void *mul_tensor_scalar(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a, b};
         int n = a->size;
         int blocks = (n + 255) / 256;
@@ -259,7 +302,7 @@ extern "C"
     DLLEXPORT void *div_tensor_scalar(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a, b};
         int n = a->size;
         int blocks = (n + 255) / 256;
@@ -275,7 +318,7 @@ extern "C"
     DLLEXPORT void *add_tensors(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a, b};
 
         int n = a->size;
@@ -295,7 +338,7 @@ extern "C"
     DLLEXPORT void *sub_tensors(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a, b};
 
         // We process 4 elements per thread
@@ -314,7 +357,7 @@ extern "C"
     DLLEXPORT void *mul_tensors(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a, b};
 
         // Divide size by 4 because each thread handles 4 floats
@@ -336,7 +379,7 @@ extern "C"
     DLLEXPORT void *div_tensors(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a, b};
         div_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, b->data_gpu, out->data_gpu, a->size);
         out->_backward = [out, a, b]()
@@ -346,7 +389,7 @@ extern "C"
     DLLEXPORT void *pow_tensor(void *ah, float exp)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
         pow_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, exp, out->data_gpu, a->size);
         out->_backward = [out, a, exp]()
@@ -356,7 +399,7 @@ extern "C"
     DLLEXPORT void *relu_tensor(void *ah)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
         relu_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, out->data_gpu, a->size);
         out->_backward = [out, a]()
@@ -367,7 +410,7 @@ extern "C"
     DLLEXPORT void *gelu_tensor(void *ah)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
 
         gelu_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, out->data_gpu, a->size);
@@ -382,7 +425,7 @@ extern "C"
     DLLEXPORT void *sigmoid_tensor(void *ah)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
         sigmoid_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, out->data_gpu, a->size);
         out->_backward = [out, a]()
@@ -392,7 +435,7 @@ extern "C"
     DLLEXPORT void *tanh_tensor(void *ah)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
         tanh_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, out->data_gpu, a->size);
         out->_backward = [out, a]()
@@ -403,7 +446,7 @@ extern "C"
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
         int M = a->rows, K = a->cols, N = b->cols;
-        Tensor *out = new Tensor(M, N);
+        Tensor *out = make_tensor(M, N);
         out->_children = {a, b};
 
         // Forward: Tiled 32x32
@@ -432,7 +475,7 @@ extern "C"
     DLLEXPORT void *log_tensor(void *ah)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
         log_fwd<<<(a->size + 255) / 256, 256>>>(a->data_gpu, out->data_gpu, a->size);
         out->_backward = [out, a]()
@@ -499,7 +542,7 @@ extern "C"
     DLLEXPORT void *aft_forward(void *qh, void *kh, void *vh, void *wbh, bool masked)
     {
         Tensor *Q = (Tensor *)qh, *K = (Tensor *)kh, *V = (Tensor *)vh, *WB = (Tensor *)wbh;
-        Tensor *out = new Tensor(Q->rows, Q->cols);
+        Tensor *out = make_tensor(Q->rows, Q->cols);
         out->_children = {Q, K, V, WB};
 
         int T = Q->rows;
@@ -523,7 +566,7 @@ extern "C"
     DLLEXPORT void *aft_cross_forward(void *qh, void *kh, void *vh, void *wbh)
     {
         Tensor *Q = (Tensor *)qh, *K = (Tensor *)kh, *V = (Tensor *)vh, *WB = (Tensor *)wbh;
-        Tensor *out = new Tensor(Q->rows, Q->cols);
+        Tensor *out = make_tensor(Q->rows, Q->cols);
         out->_children = {Q, K, V, WB};
 
         int TDec = Q->rows, TEnc = K->rows, D = Q->cols;
@@ -549,7 +592,7 @@ extern "C"
 
         int rows = ts[0]->rows;
         int cols_per_t = ts[0]->cols;
-        Tensor *out = new Tensor(rows, cols_per_t * num_tensors);
+        Tensor *out = make_tensor(rows, cols_per_t * num_tensors);
 
         // Prepare device pointers for the kernel
         float **d_inputs;
@@ -581,7 +624,7 @@ extern "C"
             cudaFree(d_grads);
         };
 
-        out->_children = ts;
+        out->_children.clear(); out->_children.reserve(ts.size()); for (auto *__p : ts) out->_children.emplace_back(__p);
         return (void *)out;
     }
 
@@ -601,7 +644,7 @@ extern "C"
         }
         h_offsets[num_tensors] = total_rows;
 
-        Tensor *out = new Tensor(total_rows, cols);
+        Tensor *out = make_tensor(total_rows, cols);
 
         // Device pointer arrays.
         float **d_inputs;
@@ -643,13 +686,13 @@ extern "C"
             // destroyed (i.e. when `out` is destroyed).
         };
 
-        out->_children = ts;
+        out->_children.clear(); out->_children.reserve(ts.size()); for (auto *__p : ts) out->_children.emplace_back(__p);
         return (void *)out;
     }
     DLLEXPORT void *layernorm_forward(void *xh, void *gh, void *bh, float eps)
     {
         Tensor *x = (Tensor *)xh, *gamma = (Tensor *)gh, *beta = (Tensor *)bh;
-        Tensor *out = new Tensor(x->rows, x->cols);
+        Tensor *out = make_tensor(x->rows, x->cols);
         out->_children = {x, gamma, beta};
 
         layernorm_fwd<<<x->rows, 1>>>(x->data_gpu, gamma->data_gpu, beta->data_gpu, out->data_gpu, x->rows, x->cols, eps);
@@ -674,7 +717,7 @@ extern "C"
     DLLEXPORT void *embedding_forward(int *h_indices, void *wteh, void *wpeh, int T, int D)
     {
         Tensor *wte = (Tensor *)wteh, *wpe = (Tensor *)wpeh;
-        Tensor *out = new Tensor(T, D);
+        Tensor *out = make_tensor(T, D);
         out->_children = {wte, wpe};
 
         // Allocate and copy indices to GPU
@@ -704,7 +747,7 @@ extern "C"
     void *cross_entropy_loss(void *lh, int *h_targets, int T, int V)
     {
         Tensor *logits = (Tensor *)lh;
-        Tensor *out = new Tensor(1, 1);
+        Tensor *out = make_tensor(1, 1);
         out->_children = {logits};
 
         int *d_targets;
@@ -830,7 +873,7 @@ extern "C"
     //     int total_elements = numRows * cols;
     //     int start_idx = startRow * cols;
 
-    //     Tensor *out = new Tensor(numRows, cols);
+    //     Tensor *out = make_tensor(numRows, cols);
     //     out->_children = {t};
 
     //     // Forward pass: Copy rows from t to out
@@ -864,7 +907,7 @@ extern "C"
 
         // IMPORTANT: This calls the constructor that runs cudaMalloc.
         // This 'out' tensor OWNS its own memory.
-        Tensor *out = new Tensor(numRows, cols);
+        Tensor *out = make_tensor(numRows, cols);
         out->_children = {t};
 
         int threads = 256;
@@ -888,7 +931,7 @@ extern "C"
     DLLEXPORT void *abs_tensor(void *ah)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
 
         int threads = 256;
@@ -936,7 +979,7 @@ extern "C"
     DLLEXPORT void *softmax_forward(void *ah)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(a->rows, a->cols);
+        Tensor *out = make_tensor(a->rows, a->cols);
         out->_children = {a};
 
         // Launch row-wise (one thread per query/row)
@@ -970,7 +1013,7 @@ extern "C"
     {
         Tensor *a = (Tensor *)ah;
         // Result is always a 1x1 tensor
-        Tensor *out = new Tensor(1, 1);
+        Tensor *out = make_tensor(1, 1);
         out->_children = {a};
 
         // Initialize output memory to zero before reduction
@@ -992,7 +1035,7 @@ extern "C"
     DLLEXPORT void *mean_tensor(void *ah)
     {
         Tensor *a = (Tensor *)ah;
-        Tensor *out = new Tensor(1, 1);
+        Tensor *out = make_tensor(1, 1);
         out->_children = {a};
 
         cudaMemset(out->data_gpu, 0, sizeof(float));
@@ -1034,7 +1077,7 @@ extern "C"
     //     Tensor *a = (Tensor *)ah;
     //     int R = a->rows;
     //     int C = a->cols;
-    //     Tensor *out = new Tensor(R, C);
+    //     Tensor *out = make_tensor(R, C);
     //     out->_children = {a};
 
     //     int threads = 256;
@@ -1058,7 +1101,7 @@ extern "C"
         Tensor *a = (Tensor *)ah;
         int R = a->rows;
         int C = a->cols;
-        Tensor *out = new Tensor(R, C);
+        Tensor *out = make_tensor(R, C);
         out->_children = {a};
 
         int threads = 256;
