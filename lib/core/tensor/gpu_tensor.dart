@@ -13,30 +13,15 @@ import 'package:ffi/ffi.dart';
 import 'cuda_engine.dart';
 export 'cuda_engine.dart' show engine, CudaEngine;
 
-// ---------------------------------------------------------------------------
-// GC safety net: each owning Tensor attaches itself to this finalizer so
-// that when Dart drops its last reference (e.g. an example forgot to call
-// `dispose()` in a long-running training loop), the underlying CUDA
-// allocations and C++ struct are still reclaimed. Views share another
-// tensor's handle and must NOT be attached.
-class _TensorReaperToken {
-  final ffi.Pointer<ffi.Void> handle;
-  final bool isView;
-  bool disposed;
-  _TensorReaperToken(this.handle, this.isView) : disposed = false;
-}
-
-final Finalizer<_TensorReaperToken> _tensorFinalizer =
-    Finalizer<_TensorReaperToken>((tok) {
-      if (tok.disposed || tok.isView || tok.handle.address == 0) return;
-      try {
-        engine.destroyTensor(tok.handle);
-      } catch (_) {
-        // Engine may already be torn down at process exit; swallow to avoid
-        // crashing during finalization.
-      }
-      tok.disposed = true;
-    });
+// NOTE on memory management:
+// The C++ autograd graph stores raw `Tensor*` pointers in `_children` and
+// captures raw pointers inside `_backward` closures. Dart's GC has no
+// visibility into those references, so a `Finalizer` cannot safely free
+// owning tensors automatically — a Dart wrapper can become unreachable
+// while the underlying C++ struct is still required by some other
+// tensor's backward pass. We therefore rely exclusively on explicit
+// `dispose()` calls (see the `tracker` + `_safeCleanup` pattern in the
+// examples). `dispose()` is a no-op on views and idempotent.
 
 class Tensor {
   late final ffi.Pointer<ffi.Void> _handle;
@@ -46,26 +31,8 @@ class Tensor {
 
   bool? isView; // New field
 
-  // Tensor(this.shape, {this.children}) {
-  //   // return Tensor._raw(this._handle, this.shape, {this.isView = false});
-  // }
-
-  // Internal handle wrapper used as the Finalizer attach token. Holding a
-  // single mutable record (instead of the Tensor itself) lets the GC
-  // reclaim a forgotten Tensor and still call destroyTensor on its native
-  // handle. `disposed` is flipped to true by `dispose()` so the finalizer
-  // becomes a no-op for tensors the user has already cleaned up.
-  final _TensorReaperToken _reaperToken;
-
   Tensor._raw(this._handle, this.shape, {this.isView = false})
-    : length = shape.reduce((a, b) => a * b),
-      _reaperToken = _TensorReaperToken(_handle, isView ?? false) {
-    // Views share their handle with another tensor and must not be freed
-    // by the finalizer; only attach for owning handles.
-    if (!(isView ?? false) && _handle.address != 0) {
-      _tensorFinalizer.attach(this, _reaperToken, detach: this);
-    }
-  }
+    : length = shape.reduce((a, b) => a * b);
 
   ffi.Pointer<ffi.Void> get handle => _handle;
 
@@ -582,8 +549,6 @@ class Tensor {
 
     engine.destroyTensor(_handle);
     _isDisposed = true;
-    _reaperToken.disposed = true;
-    _tensorFinalizer.detach(this);
   }
 
   static Tensor l2Normalize(

@@ -58,12 +58,23 @@ extern "C"
     {
         if (!h)
             return;
-        // ~Tensor() handles cudaFree of data_gpu/grad_gpu when !is_view.
-        // Previously we hand-rolled the cudaFree here and skipped `delete`,
-        // which leaked the C++ struct (vectors, std::function, pointer
-        // members) on every dispose. Letting the destructor run reclaims
-        // both GPU buffers and the host-side struct.
-        delete (Tensor *)h;
+        // NOTE: We deliberately do NOT `delete t` here. The C++ autograd
+        // graph stores raw `Tensor*` pointers in `_children` and captures
+        // raw pointers in `_backward` closures. Other tensors may still
+        // reference this struct through those pointers; freeing the struct
+        // would leave them dangling and segfault on the next backward()
+        // walk. Freeing the GPU buffers alone is the conservative choice
+        // (small per-tensor host leak, but stable). A real fix requires
+        // making `_children` use shared ownership (e.g. shared_ptr) so the
+        // struct can be freed safely.
+        Tensor *t = (Tensor *)h;
+        if (!t->is_view)
+        {
+            cudaFree(t->data_gpu);
+            cudaFree(t->grad_gpu);
+            t->data_gpu = nullptr;
+            t->grad_gpu = nullptr;
+        }
     }
     DLLEXPORT void get_tensor_data(void *h, float *b)
     {
