@@ -56,12 +56,7 @@ void main(List<String> args) async {
   final returns = <double>[];
   for (int ep = 1; ep <= episodes; ep++) {
     final eps = _linearAnneal(ep, episodes, epsilonStart, epsilonEnd);
-    final traj = rolloutEpisode(
-      env: env,
-      agent: agent,
-      epsilon: eps,
-      rng: rng,
-    );
+    final traj = rolloutEpisode(env: env, agent: agent, epsilon: eps, rng: rng);
     buffer.add(traj);
     returns.add(traj.returnSum);
 
@@ -88,10 +83,9 @@ void main(List<String> args) async {
 
     if (ep % 5 == 0 || ep == episodes) {
       final last20 =
-          returns.sublist(math.max(0, returns.length - 20)).fold<double>(
-                0,
-                (a, b) => a + b,
-              ) /
+          returns
+              .sublist(math.max(0, returns.length - 20))
+              .fold<double>(0, (a, b) => a + b) /
           math.min(20, returns.length);
       print(
         'ep $ep  ε=${eps.toStringAsFixed(2)}  '
@@ -125,7 +119,7 @@ Future<void> _visualRollout(
       stdout.write(Ansi.clearScreen);
       stdout.writeln('=== $label  step $step ===');
       stdout.write(env.render());
-      stdout.flush();
+      await stdout.flush();
       final a = selectAction(agent, obs, 0.0, rng);
       final res = env.step(a);
       obs = res.observation;
@@ -134,7 +128,7 @@ Future<void> _visualRollout(
         stdout.write(Ansi.clearScreen);
         stdout.writeln('=== $label  step ${step + 1} (terminal) ===');
         stdout.write(env.render());
-        stdout.flush();
+        await stdout.flush();
         break;
       }
     }

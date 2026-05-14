@@ -64,8 +64,7 @@ class CartPole extends Env {
         (force + poleMassLength * _thetaDot * _thetaDot * sinTheta) / totalMass;
     final thetaAcc =
         (gravity * sinTheta - cosTheta * temp) /
-        (poleLength *
-            (4.0 / 3.0 - massPole * cosTheta * cosTheta / totalMass));
+        (poleLength * (4.0 / 3.0 - massPole * cosTheta * cosTheta / totalMass));
     final xAcc = temp - poleMassLength * thetaAcc * cosTheta / totalMass;
 
     _x += tau * _xDot;
@@ -87,11 +86,9 @@ class CartPole extends Env {
   @override
   String render() {
     const width = 60;
-    final cartCol =
-        (((_x + xThreshold) / (2 * xThreshold)) * (width - 1)).round().clamp(
-          0,
-          width - 1,
-        );
+    final cartCol = (((_x + xThreshold) / (2 * xThreshold)) * (width - 1))
+        .round()
+        .clamp(0, width - 1);
 
     final sb = StringBuffer();
     // 5-row pole visualization above the track.
