@@ -35,7 +35,11 @@ abstract class Env {
 /// ANSI helpers for live rendering in a terminal. No-op safe to call even
 /// if the output is being piped to a file (the codes are just bytes).
 class Ansi {
-  static const String clearScreen = '\x1B[2J\x1B[H';
+  /// Move cursor to home, then erase from cursor to end of display.
+  /// We deliberately avoid `\x1B[2J` because Windows Terminal (and some
+  /// others) push the cleared region into scrollback, causing every frame
+  /// to stack up instead of redrawing in place.
+  static const String clearScreen = '\x1B[H\x1B[J';
   static const String hideCursor = '\x1B[?25l';
   static const String showCursor = '\x1B[?25h';
   static String moveTo(int row, int col) => '\x1B[$row;${col}H';
