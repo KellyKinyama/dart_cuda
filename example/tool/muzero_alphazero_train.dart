@@ -69,8 +69,8 @@ class TrainCfg {
   int saveEvery = 1;
 
   // Live game printing.
-  bool showMoves = false;     // print each move as it's played
-  bool showBoard = false;     // also print ASCII board after each move
+  bool showMoves = false; // print each move as it's played
+  bool showBoard = false; // also print ASCII board after each move
 }
 
 // ---------------------------------------------------------------------------

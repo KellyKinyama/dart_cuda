@@ -97,9 +97,20 @@ dart run example/tool/muzero_vs_stockfish_train.dart example/tools/stockfish \
 
 Drop-in replacement for `muzero_vs_stockfish_train.dart` that uses pure
 self-play (both sides MCTS, no external engine) and trains policy +
-value heads on the resulting (move, game-outcome) pairs.
+value heads on the resulting (move, game-outcome) pairs. Same checkpoint
+format as the Stockfish trainer (`_AgentModule` wraps decoder + value
+head), so `muzero_chess.bin` round-trips between the two trainers.
 
-Equivalent of the Stockfish command on the same checkpoint:
+### Quick smoke run (fresh, no checkpoint)
+
+```bash
+dart run example/tool/muzero_alphazero_train.dart \
+  --iters=2 --games=2 --epochs=1 --maxply=20 \
+  --mcts-sims=8 --temperature=1.0 --temp-moves=10 \
+  --save=muzero_chess.bin --save-every=1
+```
+
+### Equivalent of the Stockfish command on the same checkpoint
 
 ```bash
 dart run example/tool/muzero_alphazero_train.dart \
@@ -108,11 +119,19 @@ dart run example/tool/muzero_alphazero_train.dart \
   --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
 ```
 
-Flags: `--iters --games --epochs --maxply --mcts-sims --cpuct
---temperature --temp-moves --lr --value-weight --seed --load --save
---save-every --show-moves --show-board`.
+### Resume training from checkpoint (longer games, more search)
 
-Watch the games as they play (UCI move list, MCTS visit count, prior):
+```bash
+dart run example/tool/muzero_alphazero_train.dart \
+  --iters=10 --games=4 --epochs=2 --maxply=80 \
+  --mcts-sims=64 --cpuct=1.4 --temperature=1.0 --temp-moves=20 \
+  --lr=5e-4 --value-weight=0.5 \
+  --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
+```
+
+### Watch the games as they play
+
+UCI move list with MCTS visit count and prior for each chosen move:
 
 ```bash
 dart run example/tool/muzero_alphazero_train.dart \
@@ -122,10 +141,44 @@ dart run example/tool/muzero_alphazero_train.dart \
   --show-moves
 ```
 
+Per-move output looks like:
+
+```
+  game 1/2 (self-play) ...
+      1.W e2e4   (visits=18/32, prior=0.142)
+      1.B e7e5   (visits=15/32, prior=0.121)
+      2.W g1f3   (visits=12/32, prior=0.098)
+      ...
+    fen: <final FEN>
+10 plies, unfinished (maxply, z=0)
+```
+
 Add `--show-board` to also print the ASCII board after every move
 (implies `--show-moves`).
 
-Notes:
+### Flags
+
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `--iters=N` | 3 | Outer iterations: each plays N games then trains. |
+| `--games=N` | 2 | Self-play games per iteration. |
+| `--epochs=N` | 2 | Training passes over the iteration's pairs. |
+| `--maxply=N` | 40 | Cap plies per game (hits → outcome `z=0`). |
+| `--mcts-sims=N` | 32 | PUCT simulations per move. |
+| `--cpuct=F` | 1.4 | PUCT exploration constant. |
+| `--temperature=F` | 1.0 | Visit-distribution sampling temperature. |
+| `--temp-moves=N` | 15 | After this many plies, switch to greedy (most-visited). |
+| `--lr=F` | 1e-3 | Base LR for Adam (warmup-cosine schedule). |
+| `--value-weight=F` | 0.5 | Weight of value-MSE relative to policy-CE. |
+| `--seed=N` | 42 | RNG seed. |
+| `--load=PATH` | – | Load checkpoint before training. |
+| `--save=PATH` | – | Save checkpoint after each `--save-every` iters. |
+| `--save-every=N` | 1 | Save every N iters (always saves the last iter). |
+| `--show-moves` | off | Print every move with MCTS stats. |
+| `--show-board` | off | Also print ASCII board after each move (implies `--show-moves`). |
+
+### Notes
+
 - Both sides are played by the model via PUCT MCTS (`ZobristMcts`)
   using its own policy priors and value head as leaf evaluations.
 - Move sampling uses visit-count distribution `^ (1/T)` for the first
@@ -135,6 +188,12 @@ Notes:
 - Policy targets are the sampled move id (cross-entropy). This is a
   hard-target proxy for the full visit distribution and matches the
   existing `Tensor.crossEntropy(List<int>)` API.
+- The move vocabulary is built once from the bundled PGN dataset, so the
+  policy head can address all common moves from step 0; vocab is **not**
+  expanded during self-play.
+- A new `ZobristMcts` instance is created per move (cleared after) to
+  bound GPU memory; transposition reuse within a single search is what
+  actually drives MCTS strength.
 
 ## MuZero overfit + next-move LM examples
 
