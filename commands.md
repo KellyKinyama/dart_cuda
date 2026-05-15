@@ -93,6 +93,36 @@ dart run example/tool/muzero_vs_stockfish_train.dart example/tools/stockfish \
   --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
 
 
+## MuZero AlphaZero self-play training
+
+Drop-in replacement for `muzero_vs_stockfish_train.dart` that uses pure
+self-play (both sides MCTS, no external engine) and trains policy +
+value heads on the resulting (move, game-outcome) pairs.
+
+Equivalent of the Stockfish command on the same checkpoint:
+
+```bash
+dart run example/tool/muzero_alphazero_train.dart \
+  --iters=3 --games=2 --epochs=2 --maxply=10 \
+  --mcts-sims=32 --temperature=1.0 --temp-moves=15 \
+  --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
+```
+
+Flags: `--iters --games --epochs --maxply --mcts-sims --cpuct
+--temperature --temp-moves --lr --value-weight --seed --load --save
+--save-every`.
+
+Notes:
+- Both sides are played by the model via PUCT MCTS (`ZobristMcts`)
+  using its own policy priors and value head as leaf evaluations.
+- Move sampling uses visit-count distribution `^ (1/T)` for the first
+  `--temp-moves` plies, then switches to greedy (most-visited).
+- Value targets are the actual game outcome `z` from the side-to-move's
+  POV at that step (±1 for checkmate, 0 for draw / maxply cutoff).
+- Policy targets are the sampled move id (cross-entropy). This is a
+  hard-target proxy for the full visit distribution and matches the
+  existing `Tensor.crossEntropy(List<int>)` API.
+
 ## MuZero overfit + next-move LM examples
 
 Both examples below auto-resolve the bundled Stockfish binary at
