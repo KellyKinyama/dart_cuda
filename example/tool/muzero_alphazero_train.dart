@@ -84,6 +84,18 @@ class TrainCfg {
   String? savePath;
   int saveEvery = 1;
 
+  // Eval gate. After each --eval-every iterations, play --eval-games
+  // games of current vs the saved "best" checkpoint. If current scores
+  // >= --eval-threshold (W + 0.5·D over decisive games), promote it as
+  // the new best; otherwise restore best into the live agent. Disabled
+  // when --eval-every <= 0 or no --save path is set.
+  int evalEvery = 0;
+  int evalGames = 4;
+  double evalThreshold = 0.55;
+  int evalMaxPlies = 60;
+  int evalMctsSims = 16;
+  String? bestPath; // defaults to <savePath>.best
+
   // Live game printing.
   bool showMoves = false; // print each move as it's played
   bool showBoard = false; // also print ASCII board after each move
@@ -231,7 +243,8 @@ _Trajectory _playOneGame({
   while (!game.gameOver && ply < cfg.maxPlies) {
     final mover = game.state.turn;
 
-    final mcts = gameMcts ??
+    final mcts =
+        gameMcts ??
         ZobristMcts(
           agent,
           tok,
@@ -311,6 +324,115 @@ _Trajectory _playOneGame({
 }
 
 // ---------------------------------------------------------------------------
+// Evaluation: play one game with two distinct agents (one per color).
+// Greedy MCTS, no Dirichlet noise, low sims. Returns the result from
+// White's POV (+1 / 0 / -1). Returns null if the game hit maxply
+// without a decisive outcome (caller treats as draw).
+// ---------------------------------------------------------------------------
+double? _playEvalGame({
+  required ChessMuZeroAgent whiteAgent,
+  required ChessMuZeroAgent blackAgent,
+  required MoveTokenizer tok,
+  required int blockSize,
+  required int maxPlies,
+  required int mctsSims,
+  required double cPuct,
+  required math.Random rng,
+}) {
+  final game = Game(variant: Variant.standard());
+  final tokHistory = <int>[tok.startId];
+
+  // One MCTS instance per (agent, game) so subtree reuse works for each
+  // side's tree across its own turns.
+  final whiteMcts = ZobristMcts(
+    whiteAgent,
+    tok,
+    blockSize: blockSize,
+    cPuct: cPuct,
+    rng: rng,
+  );
+  final blackMcts = ZobristMcts(
+    blackAgent,
+    tok,
+    blockSize: blockSize,
+    cPuct: cPuct,
+    rng: rng,
+  );
+
+  int ply = 0;
+  while (!game.gameOver && ply < maxPlies) {
+    final mover = game.state.turn;
+    final mcts = mover == Bishop.white ? whiteMcts : blackMcts;
+    final root = mcts.run(
+      rootGame: game,
+      history: tokHistory.sublist(1),
+      numSimulations: mctsSims,
+      // No Dirichlet noise during eval.
+    );
+    final pick = _sampleFromRoot(root, tok, rng, temperature: 0.0);
+    if (pick == null) break;
+    game.makeMove(pick.move);
+    tokHistory.add(pick.id);
+    ply++;
+  }
+
+  whiteMcts.clear();
+  blackMcts.clear();
+
+  if (game.checkmate) {
+    return game.state.turn == Bishop.white ? -1.0 : 1.0;
+  }
+  if (game.gameOver) return 0.0;
+  return null; // hit maxply
+}
+
+// ---------------------------------------------------------------------------
+// Run a candidate-vs-best match. Returns the candidate's score in
+// [0, 1] (W + 0.5*D over all played games; unfinished count as draws).
+// ---------------------------------------------------------------------------
+({double score, int wins, int losses, int draws, int unfinished}) _evalMatch({
+  required ChessMuZeroAgent candidate,
+  required ChessMuZeroAgent best,
+  required MoveTokenizer tok,
+  required int blockSize,
+  required int games,
+  required int maxPlies,
+  required int mctsSims,
+  required double cPuct,
+  required math.Random rng,
+}) {
+  int w = 0, l = 0, d = 0, u = 0;
+  for (int g = 0; g < games; g++) {
+    final candidateIsWhite = g.isEven;
+    final res = _playEvalGame(
+      whiteAgent: candidateIsWhite ? candidate : best,
+      blackAgent: candidateIsWhite ? best : candidate,
+      tok: tok,
+      blockSize: blockSize,
+      maxPlies: maxPlies,
+      mctsSims: mctsSims,
+      cPuct: cPuct,
+      rng: rng,
+    );
+    if (res == null) {
+      u++;
+      d++; // count unfinished as draws toward the score
+      continue;
+    }
+    final candResult = candidateIsWhite ? res : -res;
+    if (candResult > 0.5) {
+      w++;
+    } else if (candResult < -0.5) {
+      l++;
+    } else {
+      d++;
+    }
+  }
+  final score = games == 0 ? 0.0 : (w + 0.5 * d) / games;
+  return (score: score, wins: w, losses: l, draws: d, unfinished: u);
+}
+
+// ---------------------------------------------------------------------------
 // One training step: policy CE + value MSE on the post-move state.
 // ---------------------------------------------------------------------------
 ({double policy, double value}) _trainStep({
@@ -378,6 +500,8 @@ Future<int> main(List<String> args) async {
         '[--dirichlet-alpha=F] [--dirichlet-eps=F] '
         '[--replay-size=N] [--replay-batch=N] '
         '[--no-subtree-reuse] '
+        '[--eval-every=N] [--eval-games=N] [--eval-threshold=F] '
+        '[--eval-maxply=N] [--eval-sims=N] [--best=PATH] '
         '[--lr=F] [--value-weight=F] [--seed=N] '
         '[--load=PATH] [--save=PATH] [--save-every=N] '
         '[--show-moves] [--show-board]',
@@ -411,6 +535,19 @@ Future<int> main(List<String> args) async {
       cfg.replayBatch = int.parse(a.substring('--replay-batch='.length));
     } else if (a == '--no-subtree-reuse') {
       cfg.noSubtreeReuse = true;
+    } else if (a.startsWith('--eval-every=')) {
+      cfg.evalEvery = int.parse(a.substring('--eval-every='.length));
+    } else if (a.startsWith('--eval-games=')) {
+      cfg.evalGames = int.parse(a.substring('--eval-games='.length));
+    } else if (a.startsWith('--eval-threshold=')) {
+      cfg.evalThreshold =
+          double.parse(a.substring('--eval-threshold='.length));
+    } else if (a.startsWith('--eval-maxply=')) {
+      cfg.evalMaxPlies = int.parse(a.substring('--eval-maxply='.length));
+    } else if (a.startsWith('--eval-sims=')) {
+      cfg.evalMctsSims = int.parse(a.substring('--eval-sims='.length));
+    } else if (a.startsWith('--best=')) {
+      cfg.bestPath = a.substring('--best='.length);
     } else if (a.startsWith('--lr=')) {
       cfg.baseLR = double.parse(a.substring('--lr='.length));
     } else if (a.startsWith('--value-weight=')) {
@@ -456,6 +593,15 @@ Future<int> main(List<String> args) async {
   stdout.writeln(
     'Subtree reuse: ${cfg.noSubtreeReuse ? "OFF (fresh MCTS per move)" : "ON (one MCTS per game)"}',
   );
+  if (cfg.evalEvery > 0 && cfg.savePath != null) {
+    stdout.writeln(
+      'Eval gate    : every ${cfg.evalEvery} iter, ${cfg.evalGames} games, '
+      'threshold=${cfg.evalThreshold}, sims=${cfg.evalMctsSims}, '
+      'maxply=${cfg.evalMaxPlies}',
+    );
+  } else {
+    stdout.writeln('Eval gate    : disabled');
+  }
   if (cfg.loadPath != null) stdout.writeln('Load ckpt    : ${cfg.loadPath}');
   if (cfg.savePath != null) {
     stdout.writeln(
@@ -659,6 +805,77 @@ Future<int> main(List<String> args) async {
         ((iter + 1) % cfg.saveEvery == 0 || iter == cfg.numIterations - 1)) {
       await saveModuleBinary(_AgentModule(agent), cfg.savePath!);
       stdout.writeln('  saved checkpoint -> ${cfg.savePath}');
+    }
+
+    // ---- Eval gate ------------------------------------------------------
+    // Compare the freshly-trained agent against the saved best. Promote
+    // (copy save -> best) on win, restore (load best -> live agent) on
+    // loss. First eval just snapshots whatever we have as best.
+    if (cfg.evalEvery > 0 &&
+        cfg.savePath != null &&
+        ((iter + 1) % cfg.evalEvery == 0 || iter == cfg.numIterations - 1)) {
+      final bestPath = cfg.bestPath ?? '${cfg.savePath!}.best';
+
+      if (!File(bestPath).existsSync()) {
+        await File(cfg.savePath!).copy(bestPath);
+        stdout.writeln('  eval: no best yet, snapshotted -> $bestPath');
+      } else {
+        // Load best into a separate agent (same architecture).
+        final bestModel = DeepSeekAFTDecoder(
+          vocabSize: tok.vocabSize,
+          embedSize: embedSize,
+          blockSize: blockSize,
+          numLayers: numLayers,
+          numHeads: numHeads,
+          encoderEmbedSize: embedSize,
+          numRoutedExperts: numRoutedExperts,
+          numSharedExperts: numSharedExperts,
+          topK: topK,
+          expertHiddenSize: expertHiddenSize,
+        );
+        final bestAgent = ChessMuZeroAgent(bestModel);
+        await loadModuleBinary(_AgentModule(bestAgent), bestPath);
+
+        stdout.write(
+          '  eval: candidate vs best (${cfg.evalGames} games) ... ',
+        );
+        final res = _evalMatch(
+          candidate: agent,
+          best: bestAgent,
+          tok: tok,
+          blockSize: blockSize,
+          games: cfg.evalGames,
+          maxPlies: cfg.evalMaxPlies,
+          mctsSims: cfg.evalMctsSims,
+          cPuct: cfg.cPuct,
+          rng: rng,
+        );
+        stdout.writeln(
+          'W=${res.wins} L=${res.losses} D=${res.draws} '
+          '(unfin=${res.unfinished}) '
+          'score=${(res.score * 100).toStringAsFixed(1)}%',
+        );
+
+        if (res.score >= cfg.evalThreshold) {
+          await File(cfg.savePath!).copy(bestPath);
+          stdout.writeln(
+            '  eval: PROMOTED candidate (>= '
+            '${(cfg.evalThreshold * 100).toStringAsFixed(0)}%) -> $bestPath',
+          );
+        } else {
+          // Revert: load best back into the live agent. Adam moments are
+          // kept (they will adapt). This is a deliberate rejection of
+          // the last training round.
+          await loadModuleBinary(_AgentModule(agent), bestPath);
+          // Also overwrite save so a future --load resumes from best.
+          await File(bestPath).copy(cfg.savePath!);
+          stdout.writeln(
+            '  eval: REJECTED candidate (< '
+            '${(cfg.evalThreshold * 100).toStringAsFixed(0)}%), '
+            'rolled back to best',
+          );
+        }
+      }
     }
   }
 

@@ -151,6 +151,40 @@ fresh-MCTS-per-move behavior. The win grows with `--mcts-sims`: at
 ≤16 sims it's invisible, at 64–256 sims it can roughly halve search
 wall-clock per game.
 
+### Eval gate (best-checkpoint ladder)
+
+Periodically play the freshly-trained agent against a saved "best"
+checkpoint; only promote on a strong-enough win, otherwise roll back.
+This prevents a bad iteration from quietly overwriting a good model.
+
+```bash
+dart run example/tool/muzero_alphazero_train.dart \
+  --iters=20 --games=4 --epochs=2 --maxply=80 \
+  --mcts-sims=64 --temperature=1.0 --temp-moves=20 \
+  --dirichlet-alpha=0.3 --dirichlet-eps=0.25 \
+  --replay-size=20000 --replay-batch=512 \
+  --eval-every=2 --eval-games=8 --eval-threshold=0.55 \
+  --eval-sims=32 --eval-maxply=80 \
+  --load=muzero_chess.bin --save=muzero_chess.bin --best=muzero_chess.best.bin
+```
+
+What the gate does at the end of each `--eval-every` iteration:
+
+1. If `<best>` doesn't exist yet: snapshot the current `<save>` to
+   `<best>` and continue.
+2. Otherwise load `<best>` into a separate agent and play `--eval-games`
+   games (alternating colors) at `--eval-sims` sims/move, greedy, **no
+   Dirichlet noise**.
+3. If candidate's score `(W + 0.5·D + 0.5·unfinished) / games ≥
+   --eval-threshold`: copy `<save>` over `<best>` (PROMOTED).
+4. Otherwise: load `<best>` back into the live training agent and
+   overwrite `<save>` with `<best>` (REJECTED, rolled back). Adam
+   moments are preserved — only the network weights revert.
+
+Defaults: `--eval-every=0` (disabled), `--eval-games=4`,
+`--eval-threshold=0.55`, `--eval-maxply=60`, `--eval-sims=16`,
+`--best=<save>.best`. The gate is a no-op without `--save`.
+
 ### Watch the games as they play
 
 UCI move list with MCTS visit count and prior for each chosen move:
@@ -195,6 +229,12 @@ Add `--show-board` to also print the ASCII board after every move
 | `--replay-size=N` | 0 | FIFO replay buffer capacity (0 = disabled, fresh pairs only). |
 | `--replay-batch=N` | 0 | Pairs sampled per epoch from the buffer (0 = use all). |
 | `--no-subtree-reuse` | off | Use fresh MCTS per move (legacy); default reuses the per-game tree. |
+| `--eval-every=N` | 0 | Run candidate-vs-best gate every N iters (0 = disabled). |
+| `--eval-games=N` | 4 | Eval games per gate (alternating colors). |
+| `--eval-threshold=F` | 0.55 | Min candidate score to be promoted to new best. |
+| `--eval-maxply=N` | 60 | Maxply per eval game. |
+| `--eval-sims=N` | 16 | MCTS sims/move during eval (no Dirichlet, greedy). |
+| `--best=PATH` | `<save>.best` | Path to the best-checkpoint file. |
 | `--lr=F` | 1e-3 | Base LR for Adam (warmup-cosine schedule). |
 | `--value-weight=F` | 0.5 | Weight of value-MSE relative to policy-CE. |
 | `--seed=N` | 42 | RNG seed. |
