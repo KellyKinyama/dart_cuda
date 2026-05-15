@@ -125,9 +125,22 @@ dart run example/tool/muzero_alphazero_train.dart \
 dart run example/tool/muzero_alphazero_train.dart \
   --iters=10 --games=4 --epochs=2 --maxply=80 \
   --mcts-sims=64 --cpuct=1.4 --temperature=1.0 --temp-moves=20 \
+  --dirichlet-alpha=0.3 --dirichlet-eps=0.25 \
+  --replay-size=20000 --replay-batch=512 \
   --lr=5e-4 --value-weight=0.5 \
   --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1
 ```
+
+`--replay-size` keeps a FIFO buffer of `(history, sampled-move,
+value-target)` triples across iterations; each training epoch then
+samples `--replay-batch` of them (without replacement). 0 disables the
+buffer (legacy: train only on the freshest pairs).
+
+`--dirichlet-alpha=0.3 --dirichlet-eps=0.25` mixes symmetric
+Dirichlet(α) noise into the **root** priors before each MCTS search:
+`P_i ← (1 − ε)·P_i + ε·η_i`. These are the AlphaZero chess defaults and
+keep self-play from collapsing to the same lines. Set `--dirichlet-eps=0`
+to disable.
 
 ### Watch the games as they play
 
@@ -168,6 +181,10 @@ Add `--show-board` to also print the ASCII board after every move
 | `--cpuct=F` | 1.4 | PUCT exploration constant. |
 | `--temperature=F` | 1.0 | Visit-distribution sampling temperature. |
 | `--temp-moves=N` | 15 | After this many plies, switch to greedy (most-visited). |
+| `--dirichlet-alpha=F` | 0.3 | Symmetric Dirichlet(α) for root prior noise. |
+| `--dirichlet-eps=F` | 0.25 | Mix weight of root noise (0 = disabled). |
+| `--replay-size=N` | 0 | FIFO replay buffer capacity (0 = disabled, fresh pairs only). |
+| `--replay-batch=N` | 0 | Pairs sampled per epoch from the buffer (0 = use all). |
 | `--lr=F` | 1e-3 | Base LR for Adam (warmup-cosine schedule). |
 | `--value-weight=F` | 0.5 | Weight of value-MSE relative to policy-CE. |
 | `--seed=N` | 42 | RNG seed. |

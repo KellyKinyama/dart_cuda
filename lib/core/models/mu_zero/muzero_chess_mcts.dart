@@ -103,13 +103,30 @@ class ZobristMcts {
   ///
   /// [history] is the tokenized move history (without `<start>`) that
   /// led to the root position; the model's representation needs it.
+  ///
+  /// If [dirichletEps] > 0 and [dirichletAlpha] > 0, mixes symmetric
+  /// Dirichlet(alpha) noise into the root priors before search:
+  ///   `P_i = (1 - eps) * P_i + eps * eta_i`,  eta ~ Dir(alpha).
+  /// This is the AlphaZero exploration mechanism (chess: alpha≈0.3,
+  /// eps=0.25). Noise is applied at the *root only*, on each call.
   MctsNode run({
     required Game rootGame,
     required List<int> history,
     required int numSimulations,
+    double dirichletAlpha = 0.0,
+    double dirichletEps = 0.0,
   }) {
     final rootFen = rootGame.fen;
     final root = _ensureNode(rootGame, history);
+    if (dirichletAlpha > 0.0 &&
+        dirichletEps > 0.0 &&
+        root.priors.isNotEmpty) {
+      final noise = _sampleDirichlet(root.priors.length, dirichletAlpha);
+      for (int i = 0; i < root.priors.length; i++) {
+        root.priors[i] =
+            (1.0 - dirichletEps) * root.priors[i] + dirichletEps * noise[i];
+      }
+    }
     for (int s = 0; s < numSimulations; s++) {
       _simulate(
         Game(variant: Variant.standard(), fen: rootFen),
@@ -117,6 +134,57 @@ class ZobristMcts {
       );
     }
     return root;
+  }
+
+  /// Sample a symmetric Dirichlet(alpha) of length [k]. Uses Marsaglia &
+  /// Tsang's method to draw Gamma(alpha, 1) variates and normalises.
+  /// Returns a uniform vector if any sample is non-finite.
+  List<double> _sampleDirichlet(int k, double alpha) {
+    final out = List<double>.filled(k, 0.0);
+    double sum = 0.0;
+    for (int i = 0; i < k; i++) {
+      final g = _gammaSample(alpha);
+      out[i] = g;
+      sum += g;
+    }
+    if (sum <= 0 || !sum.isFinite) {
+      return List<double>.filled(k, 1.0 / k);
+    }
+    for (int i = 0; i < k; i++) {
+      out[i] /= sum;
+    }
+    return out;
+  }
+
+  /// Gamma(shape, 1) sample via Marsaglia–Tsang for shape >= 1; for
+  /// shape < 1, uses the Johnk/Best boost: G(a) = G(a+1) * U^(1/a).
+  double _gammaSample(double shape) {
+    if (shape < 1.0) {
+      final g = _gammaSample(shape + 1.0);
+      final u = rng.nextDouble().clamp(1e-12, 1.0);
+      return g * math.pow(u, 1.0 / shape).toDouble();
+    }
+    final d = shape - 1.0 / 3.0;
+    final c = 1.0 / math.sqrt(9.0 * d);
+    while (true) {
+      double x, v;
+      do {
+        x = _stdNormal();
+        v = 1.0 + c * x;
+      } while (v <= 0);
+      v = v * v * v;
+      final u = rng.nextDouble();
+      final x2 = x * x;
+      if (u < 1.0 - 0.0331 * x2 * x2) return d * v;
+      if (math.log(u) < 0.5 * x2 + d * (1.0 - v + math.log(v))) return d * v;
+    }
+  }
+
+  /// Standard-normal sample via Box–Muller.
+  double _stdNormal() {
+    final u1 = rng.nextDouble().clamp(1e-12, 1.0);
+    final u2 = rng.nextDouble();
+    return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2);
   }
 
   /// One simulation: descend with PUCT until we hit a leaf (a node that

@@ -56,6 +56,17 @@ class TrainCfg {
   double cPuct = 1.4;
   double temperature = 1.0; // sampling temperature for the early plies
   int tempMoves = 15; // after this many plies, switch to greedy
+  // Root-only Dirichlet noise mixed into priors before search.
+  // AlphaZero chess defaults: alpha=0.3, eps=0.25.
+  double dirichletAlpha = 0.3;
+  double dirichletEps = 0.25;
+
+  // Replay buffer (FIFO across iterations). 0 = disabled (train only on
+  // freshly collected pairs, original behavior).
+  int replaySize = 0;
+  // Max number of pairs sampled from the buffer per training epoch.
+  // 0 = use the full buffer.
+  int replayBatch = 0;
 
   // Optimization.
   double baseLR = 1e-3;
@@ -216,6 +227,8 @@ _Trajectory _playOneGame({
       rootGame: game,
       history: tokHistory.sublist(1),
       numSimulations: cfg.mctsSims,
+      dirichletAlpha: cfg.dirichletAlpha,
+      dirichletEps: cfg.dirichletEps,
     );
 
     final temperature = ply < cfg.tempMoves ? cfg.temperature : 0.0;
@@ -337,6 +350,8 @@ Future<int> main(List<String> args) async {
         'Usage: dart run example/tool/muzero_alphazero_train.dart '
         '[--iters=N] [--games=N] [--epochs=N] [--maxply=N] '
         '[--mcts-sims=N] [--cpuct=F] [--temperature=F] [--temp-moves=N] '
+        '[--dirichlet-alpha=F] [--dirichlet-eps=F] '
+        '[--replay-size=N] [--replay-batch=N] '
         '[--lr=F] [--value-weight=F] [--seed=N] '
         '[--load=PATH] [--save=PATH] [--save-every=N] '
         '[--show-moves] [--show-board]',
@@ -358,6 +373,16 @@ Future<int> main(List<String> args) async {
       cfg.temperature = double.parse(a.substring('--temperature='.length));
     } else if (a.startsWith('--temp-moves=')) {
       cfg.tempMoves = int.parse(a.substring('--temp-moves='.length));
+    } else if (a.startsWith('--dirichlet-alpha=')) {
+      cfg.dirichletAlpha =
+          double.parse(a.substring('--dirichlet-alpha='.length));
+    } else if (a.startsWith('--dirichlet-eps=')) {
+      cfg.dirichletEps =
+          double.parse(a.substring('--dirichlet-eps='.length));
+    } else if (a.startsWith('--replay-size=')) {
+      cfg.replaySize = int.parse(a.substring('--replay-size='.length));
+    } else if (a.startsWith('--replay-batch=')) {
+      cfg.replayBatch = int.parse(a.substring('--replay-batch='.length));
     } else if (a.startsWith('--lr=')) {
       cfg.baseLR = double.parse(a.substring('--lr='.length));
     } else if (a.startsWith('--value-weight=')) {
@@ -391,6 +416,14 @@ Future<int> main(List<String> args) async {
   stdout.writeln(
     'MCTS         : sims=${cfg.mctsSims}  cpuct=${cfg.cPuct}  '
     'temperature=${cfg.temperature} (first ${cfg.tempMoves} plies)',
+  );
+  stdout.writeln(
+    'Dirichlet    : alpha=${cfg.dirichletAlpha}  eps=${cfg.dirichletEps}'
+    '${cfg.dirichletEps <= 0 ? '  (disabled)' : ''}',
+  );
+  stdout.writeln(
+    'Replay buffer: size=${cfg.replaySize}'
+    '${cfg.replaySize <= 0 ? '  (disabled, fresh pairs only)' : '  batch/epoch=${cfg.replayBatch == 0 ? "all" : cfg.replayBatch}'}',
   );
   if (cfg.loadPath != null) stdout.writeln('Load ckpt    : ${cfg.loadPath}');
   if (cfg.savePath != null) {
@@ -465,6 +498,10 @@ Future<int> main(List<String> args) async {
   int totalDraws = 0;
   int totalUnfinished = 0;
 
+  // Optional FIFO replay buffer of (history, target, value-target) pairs
+  // accumulated across iterations. Empty when --replay-size <= 0.
+  final replay = <_TrainPair>[];
+
   for (int iter = 0; iter < cfg.numIterations; iter++) {
     stdout.writeln('\n=== Iteration ${iter + 1}/${cfg.numIterations} ===');
     final trajectories = <_Trajectory>[];
@@ -509,23 +546,52 @@ Future<int> main(List<String> args) async {
 
     // Build a flat list of training pairs (every step is a training
     // example in AlphaZero — both colors are "the model").
-    final pairs = <_TrainPair>[];
+    final freshPairs = <_TrainPair>[];
     for (final traj in trajectories) {
       for (final s in traj.steps) {
-        pairs.add(_TrainPair(s, traj));
+        freshPairs.add(_TrainPair(s, traj));
       }
     }
-    if (pairs.isEmpty) {
+    if (freshPairs.isEmpty) {
       stdout.writeln('  no training pairs collected; skipping training');
       continue;
     }
 
+    // Either train on freshly collected pairs only (legacy mode), or
+    // append to a FIFO replay buffer and train on a sample from it.
+    final List<_TrainPair> trainSource;
+    if (cfg.replaySize > 0) {
+      replay.addAll(freshPairs);
+      while (replay.length > cfg.replaySize) {
+        replay.removeAt(0);
+      }
+      trainSource = replay;
+      stdout.writeln(
+        '  replay: +${freshPairs.length} new, '
+        'buffer=${replay.length}/${cfg.replaySize}',
+      );
+    } else {
+      trainSource = freshPairs;
+    }
+
     for (int epoch = 0; epoch < cfg.trainEpochsPerIter; epoch++) {
-      pairs.shuffle(rng);
+      // Sample (or take all) from the train source for this epoch.
+      List<_TrainPair> batch;
+      if (cfg.replaySize > 0 &&
+          cfg.replayBatch > 0 &&
+          trainSource.length > cfg.replayBatch) {
+        // Random sample without replacement.
+        final idx = List<int>.generate(trainSource.length, (i) => i)
+          ..shuffle(rng);
+        batch = [for (int j = 0; j < cfg.replayBatch; j++) trainSource[idx[j]]];
+      } else {
+        batch = List<_TrainPair>.from(trainSource)..shuffle(rng);
+      }
+
       double pLossSum = 0.0;
       double vLossSum = 0.0;
       int n = 0;
-      for (final p in pairs) {
+      for (final p in batch) {
         final trajResultWhite = p.trajectory.finalResultForWhite;
         final valueTarget = p.step.moverIsWhite
             ? trajResultWhite
