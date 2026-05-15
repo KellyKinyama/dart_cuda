@@ -140,7 +140,16 @@ buffer (legacy: train only on the freshest pairs).
 Dirichlet(α) noise into the **root** priors before each MCTS search:
 `P_i ← (1 − ε)·P_i + ε·η_i`. These are the AlphaZero chess defaults and
 keep self-play from collapsing to the same lines. Set `--dirichlet-eps=0`
-to disable.
+to disable. Noise is applied **idempotently** (re-mixed from a stored
+clean snapshot each turn) so subtree reuse never compounds it.
+
+**Subtree reuse** is on by default: one `ZobristMcts` instance is kept
+per game so the transposition table — and therefore the search subtree
+below the move just played — is preserved as next move's root
+expansion. Pass `--no-subtree-reuse` to fall back to the legacy
+fresh-MCTS-per-move behavior. The win grows with `--mcts-sims`: at
+≤16 sims it's invisible, at 64–256 sims it can roughly halve search
+wall-clock per game.
 
 ### Watch the games as they play
 
@@ -185,6 +194,7 @@ Add `--show-board` to also print the ASCII board after every move
 | `--dirichlet-eps=F` | 0.25 | Mix weight of root noise (0 = disabled). |
 | `--replay-size=N` | 0 | FIFO replay buffer capacity (0 = disabled, fresh pairs only). |
 | `--replay-batch=N` | 0 | Pairs sampled per epoch from the buffer (0 = use all). |
+| `--no-subtree-reuse` | off | Use fresh MCTS per move (legacy); default reuses the per-game tree. |
 | `--lr=F` | 1e-3 | Base LR for Adam (warmup-cosine schedule). |
 | `--value-weight=F` | 0.5 | Weight of value-MSE relative to policy-CE. |
 | `--seed=N` | 42 | RNG seed. |
@@ -208,9 +218,11 @@ Add `--show-board` to also print the ASCII board after every move
 - The move vocabulary is built once from the bundled PGN dataset, so the
   policy head can address all common moves from step 0; vocab is **not**
   expanded during self-play.
-- A new `ZobristMcts` instance is created per move (cleared after) to
-  bound GPU memory; transposition reuse within a single search is what
-  actually drives MCTS strength.
+- A new `ZobristMcts` instance is reused **per game** by default so the
+  search tree below the just-played move carries over to the next
+  search (subtree reuse). Pass `--no-subtree-reuse` to revert to the
+  legacy per-move construction. The table is dropped at game end to
+  bound memory.
 
 ## MuZero overfit + next-move LM examples
 

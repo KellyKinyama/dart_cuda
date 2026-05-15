@@ -68,6 +68,11 @@ class TrainCfg {
   // 0 = use the full buffer.
   int replayBatch = 0;
 
+  // If true, build a fresh ZobristMcts per move (legacy). If false
+  // (default), keep one MCTS per game so the transposition table — and
+  // therefore the search subtree under the chosen move — is reused.
+  bool noSubtreeReuse = false;
+
   // Optimization.
   double baseLR = 1e-3;
   double minLR = 1e-4;
@@ -209,19 +214,31 @@ _Trajectory _playOneGame({
 
   if (cfg.showMoves) stdout.writeln();
 
+  // One MCTS instance per game by default → the transposition table
+  // (and thus the subtree below the played move) is reused across
+  // successive searches in the same game. Cleared at game end.
+  final ZobristMcts? gameMcts = cfg.noSubtreeReuse
+      ? null
+      : ZobristMcts(
+          agent,
+          tok,
+          blockSize: blockSize,
+          cPuct: cfg.cPuct,
+          rng: rng,
+        );
+
   int ply = 0;
   while (!game.gameOver && ply < cfg.maxPlies) {
     final mover = game.state.turn;
 
-    // Fresh MCTS per move keeps memory bounded; transposition reuse
-    // within a single search is what gives us value, anyway.
-    final mcts = ZobristMcts(
-      agent,
-      tok,
-      blockSize: blockSize,
-      cPuct: cfg.cPuct,
-      rng: rng,
-    );
+    final mcts = gameMcts ??
+        ZobristMcts(
+          agent,
+          tok,
+          blockSize: blockSize,
+          cPuct: cfg.cPuct,
+          rng: rng,
+        );
     // ZobristMcts expects history WITHOUT the leading <start> token.
     final root = mcts.run(
       rootGame: game,
@@ -266,8 +283,16 @@ _Trajectory _playOneGame({
       }
     }
 
-    mcts.clear();
+    // When reusing the per-game MCTS, keep the table so the subtree
+    // under the move we just played is preserved as part of next move's
+    // root expansion. Otherwise drop the per-move table.
+    if (gameMcts == null) {
+      mcts.clear();
+    }
   }
+
+  // Drop the per-game search tree (frees GPU-adjacent host memory).
+  gameMcts?.clear();
 
   if (cfg.showMoves) {
     stdout.writeln('    fen: ${game.fen}');
@@ -352,6 +377,7 @@ Future<int> main(List<String> args) async {
         '[--mcts-sims=N] [--cpuct=F] [--temperature=F] [--temp-moves=N] '
         '[--dirichlet-alpha=F] [--dirichlet-eps=F] '
         '[--replay-size=N] [--replay-batch=N] '
+        '[--no-subtree-reuse] '
         '[--lr=F] [--value-weight=F] [--seed=N] '
         '[--load=PATH] [--save=PATH] [--save-every=N] '
         '[--show-moves] [--show-board]',
@@ -374,15 +400,17 @@ Future<int> main(List<String> args) async {
     } else if (a.startsWith('--temp-moves=')) {
       cfg.tempMoves = int.parse(a.substring('--temp-moves='.length));
     } else if (a.startsWith('--dirichlet-alpha=')) {
-      cfg.dirichletAlpha =
-          double.parse(a.substring('--dirichlet-alpha='.length));
+      cfg.dirichletAlpha = double.parse(
+        a.substring('--dirichlet-alpha='.length),
+      );
     } else if (a.startsWith('--dirichlet-eps=')) {
-      cfg.dirichletEps =
-          double.parse(a.substring('--dirichlet-eps='.length));
+      cfg.dirichletEps = double.parse(a.substring('--dirichlet-eps='.length));
     } else if (a.startsWith('--replay-size=')) {
       cfg.replaySize = int.parse(a.substring('--replay-size='.length));
     } else if (a.startsWith('--replay-batch=')) {
       cfg.replayBatch = int.parse(a.substring('--replay-batch='.length));
+    } else if (a == '--no-subtree-reuse') {
+      cfg.noSubtreeReuse = true;
     } else if (a.startsWith('--lr=')) {
       cfg.baseLR = double.parse(a.substring('--lr='.length));
     } else if (a.startsWith('--value-weight=')) {
@@ -424,6 +452,9 @@ Future<int> main(List<String> args) async {
   stdout.writeln(
     'Replay buffer: size=${cfg.replaySize}'
     '${cfg.replaySize <= 0 ? '  (disabled, fresh pairs only)' : '  batch/epoch=${cfg.replayBatch == 0 ? "all" : cfg.replayBatch}'}',
+  );
+  stdout.writeln(
+    'Subtree reuse: ${cfg.noSubtreeReuse ? "OFF (fresh MCTS per move)" : "ON (one MCTS per game)"}',
   );
   if (cfg.loadPath != null) stdout.writeln('Load ckpt    : ${cfg.loadPath}');
   if (cfg.savePath != null) {

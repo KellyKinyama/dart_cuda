@@ -81,6 +81,10 @@ class ZobristMcts {
   final double backupMinimax;
   final math.Random rng;
   final Map<int, MctsNode> _table = {};
+  // Per-node snapshot of priors as first computed by the model, so that
+  // root Dirichlet noise can be applied idempotently across successive
+  // searches (subtree reuse) without compounding.
+  final Map<int, List<double>> _origPriors = {};
 
   ZobristMcts(
     this.agent,
@@ -93,7 +97,10 @@ class ZobristMcts {
 
   /// Drop the transposition table. Call between independent searches if
   /// memory matters.
-  void clear() => _table.clear();
+  void clear() {
+    _table.clear();
+    _origPriors.clear();
+  }
 
   int get nodeCount => _table.length;
 
@@ -118,13 +125,19 @@ class ZobristMcts {
   }) {
     final rootFen = rootGame.fen;
     final root = _ensureNode(rootGame, history);
-    if (dirichletAlpha > 0.0 &&
-        dirichletEps > 0.0 &&
-        root.priors.isNotEmpty) {
-      final noise = _sampleDirichlet(root.priors.length, dirichletAlpha);
+    if (dirichletAlpha > 0.0 && dirichletEps > 0.0 && root.priors.isNotEmpty) {
+      // Snapshot the model's clean priors the first time we noise this
+      // node as a root, then always restore-then-mix so noise applied on
+      // a previous turn (when this node was the root) doesn't compound
+      // when we revisit it as the root in a later turn.
+      final snap = _origPriors.putIfAbsent(
+        root.hash,
+        () => List<double>.from(root.priors),
+      );
+      final noise = _sampleDirichlet(snap.length, dirichletAlpha);
       for (int i = 0; i < root.priors.length; i++) {
         root.priors[i] =
-            (1.0 - dirichletEps) * root.priors[i] + dirichletEps * noise[i];
+            (1.0 - dirichletEps) * snap[i] + dirichletEps * noise[i];
       }
     }
     for (int s = 0; s < numSimulations; s++) {
