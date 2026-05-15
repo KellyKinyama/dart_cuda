@@ -110,7 +110,20 @@ dart run example/tool/muzero_alphazero_train.dart \
 
 Flags: `--iters --games --epochs --maxply --mcts-sims --cpuct
 --temperature --temp-moves --lr --value-weight --seed --load --save
---save-every`.
+--save-every --show-moves --show-board`.
+
+Watch the games as they play (UCI move list, MCTS visit count, prior):
+
+```bash
+dart run example/tool/muzero_alphazero_train.dart \
+  --iters=3 --games=2 --epochs=2 --maxply=10 \
+  --mcts-sims=32 --temperature=1.0 --temp-moves=15 \
+  --load=muzero_chess.bin --save=muzero_chess.bin --save-every=1 \
+  --show-moves
+```
+
+Add `--show-board` to also print the ASCII board after every move
+(implies `--show-moves`).
 
 Notes:
 - Both sides are played by the model via PUCT MCTS (`ZobristMcts`)

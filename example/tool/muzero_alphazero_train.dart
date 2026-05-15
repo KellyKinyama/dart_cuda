@@ -55,7 +55,7 @@ class TrainCfg {
   int mctsSims = 32;
   double cPuct = 1.4;
   double temperature = 1.0; // sampling temperature for the early plies
-  int tempMoves = 15;        // after this many plies, switch to greedy
+  int tempMoves = 15; // after this many plies, switch to greedy
 
   // Optimization.
   double baseLR = 1e-3;
@@ -67,6 +67,10 @@ class TrainCfg {
   String? loadPath;
   String? savePath;
   int saveEvery = 1;
+
+  // Live game printing.
+  bool showMoves = false;     // print each move as it's played
+  bool showBoard = false;     // also print ASCII board after each move
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +196,8 @@ _Trajectory _playOneGame({
   final tokHistory = <int>[tok.startId];
   final steps = <_Step>[];
 
+  if (cfg.showMoves) stdout.writeln();
+
   int ply = 0;
   while (!game.gameOver && ply < cfg.maxPlies) {
     final mover = game.state.turn;
@@ -217,18 +223,41 @@ _Trajectory _playOneGame({
     if (pick == null) break;
 
     steps.add(
-      _Step(
-        List<int>.from(tokHistory),
-        pick.id,
-        mover == Bishop.white,
-      ),
+      _Step(List<int>.from(tokHistory), pick.id, mover == Bishop.white),
     );
 
     game.makeMove(pick.move);
     tokHistory.add(pick.id);
     ply++;
 
+    if (cfg.showMoves) {
+      // Look up the chosen move's visit count and prior in the root.
+      int visits = 0;
+      double prior = 0.0;
+      for (int i = 0; i < root.legalMoves.length; i++) {
+        if (root.legalUci[i] == pick.uci) {
+          visits = root.visits[i];
+          prior = root.priors[i];
+          break;
+        }
+      }
+      final side = mover == Bishop.white ? 'W' : 'B';
+      final moveNum = ((ply + 1) / 2).floor();
+      stdout.writeln(
+        '    ${moveNum.toString().padLeft(3)}.$side ${pick.uci.padRight(6)} '
+        '(visits=$visits/${cfg.mctsSims}, '
+        'prior=${prior.toStringAsFixed(3)})',
+      );
+      if (cfg.showBoard) {
+        stdout.writeln(game.ascii());
+      }
+    }
+
     mcts.clear();
+  }
+
+  if (cfg.showMoves) {
+    stdout.writeln('    fen: ${game.fen}');
   }
 
   double resultWhite;
@@ -309,7 +338,8 @@ Future<int> main(List<String> args) async {
         '[--iters=N] [--games=N] [--epochs=N] [--maxply=N] '
         '[--mcts-sims=N] [--cpuct=F] [--temperature=F] [--temp-moves=N] '
         '[--lr=F] [--value-weight=F] [--seed=N] '
-        '[--load=PATH] [--save=PATH] [--save-every=N]',
+        '[--load=PATH] [--save=PATH] [--save-every=N] '
+        '[--show-moves] [--show-board]',
       );
       return 0;
     } else if (a.startsWith('--iters=')) {
@@ -340,6 +370,11 @@ Future<int> main(List<String> args) async {
       cfg.savePath = a.substring('--save='.length);
     } else if (a.startsWith('--save-every=')) {
       cfg.saveEvery = int.parse(a.substring('--save-every='.length));
+    } else if (a == '--show-moves') {
+      cfg.showMoves = true;
+    } else if (a == '--show-board') {
+      cfg.showMoves = true;
+      cfg.showBoard = true;
     } else {
       stderr.writeln('Unknown option: $a');
       return 64;
@@ -492,8 +527,9 @@ Future<int> main(List<String> args) async {
       int n = 0;
       for (final p in pairs) {
         final trajResultWhite = p.trajectory.finalResultForWhite;
-        final valueTarget =
-            p.step.moverIsWhite ? trajResultWhite : -trajResultWhite;
+        final valueTarget = p.step.moverIsWhite
+            ? trajResultWhite
+            : -trajResultWhite;
         final l = _trainStep(
           agent: agent,
           optimizer: optimizer,
