@@ -540,8 +540,7 @@ Future<int> main(List<String> args) async {
     } else if (a.startsWith('--eval-games=')) {
       cfg.evalGames = int.parse(a.substring('--eval-games='.length));
     } else if (a.startsWith('--eval-threshold=')) {
-      cfg.evalThreshold =
-          double.parse(a.substring('--eval-threshold='.length));
+      cfg.evalThreshold = double.parse(a.substring('--eval-threshold='.length));
     } else if (a.startsWith('--eval-maxply=')) {
       cfg.evalMaxPlies = int.parse(a.substring('--eval-maxply='.length));
     } else if (a.startsWith('--eval-sims=')) {
@@ -836,9 +835,7 @@ Future<int> main(List<String> args) async {
         final bestAgent = ChessMuZeroAgent(bestModel);
         await loadModuleBinary(_AgentModule(bestAgent), bestPath);
 
-        stdout.write(
-          '  eval: candidate vs best (${cfg.evalGames} games) ... ',
-        );
+        stdout.write('  eval: candidate vs best (${cfg.evalGames} games) ... ');
         final res = _evalMatch(
           candidate: agent,
           best: bestAgent,

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dart_cuda"
+version = "0.1.0"
+description = "Python ctypes bindings for the dart_cuda CUDA tensor/autograd engine."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "See repository LICENSE" }
+authors = [{ name = "dart_cuda contributors" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "License :: Other/Proprietary License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+images = ["Pillow>=9.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dart_cuda*"]
