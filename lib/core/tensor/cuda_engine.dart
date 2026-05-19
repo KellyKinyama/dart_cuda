@@ -283,6 +283,7 @@ class CudaEngine {
   late _D_op1 tanhTensor;
   late _D_op1 sigmoidTensor;
   late _D_op1 logTensor;
+  late _D_op1 transposeTensor;
   late _D_aft aftForward;
   late _D_aft_cross aftCrossForward;
   late _D_concat concatTensors;
@@ -338,6 +339,7 @@ class CudaEngine {
     tanhTensor = _lib.lookupFunction<_C_op1, _D_op1>('tanh_tensor');
     sigmoidTensor = _lib.lookupFunction<_C_op1, _D_op1>('sigmoid_tensor');
     logTensor = _lib.lookupFunction<_C_op1, _D_op1>('log_tensor');
+    transposeTensor = _lib.lookupFunction<_C_op1, _D_op1>('transpose_tensor');
     aftForward = _lib.lookupFunction<_C_aft, _D_aft>('aft_forward');
     aftCrossForward = _lib.lookupFunction<_C_aft_cross, _D_aft_cross>(
       'aft_cross_forward',

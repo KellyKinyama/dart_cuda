@@ -129,6 +129,15 @@ class Tensor {
   Tensor pow(double e) => Tensor._raw(engine.powTensor(_handle, e), shape);
   Tensor log() => Tensor._raw(engine.logTensor(_handle), shape);
 
+  /// 2D transpose: returns a [cols, rows] tensor with an autograd-aware
+  /// backward (`grad_in += grad_out^T`).
+  Tensor transpose() {
+    if (shape.length != 2) {
+      throw ArgumentError('transpose() requires a 2D tensor; got shape $shape');
+    }
+    return Tensor._raw(engine.transposeTensor(_handle), [shape[1], shape[0]]);
+  }
+
   /// Picks the matching scalar-broadcast variant for one of the four
   /// elementwise binary ops. Returns `null` if [opFunc] isn't one of them.
   ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Void>)?
