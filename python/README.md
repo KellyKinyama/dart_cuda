@@ -9,6 +9,7 @@ native `libmat_mul.so` powers both languages.
 - [Getting started](docs/getting_started.md) — build the `.so`, install, run XOR
 - [Tensor API](docs/tensor.md) · [Layers](docs/layers.md) · [Attention](docs/attention.md) · [Transformers](docs/transformers.md)
 - [Optimizers](docs/optimizers.md) · [Persistence](docs/persistence.md) · [Loaders](docs/loaders.md)
+- [PyTorch interop](docs/pytorch_interop.md) — convert `.pt` checkpoints into dart_cuda format
 - [Memory model](docs/memory_model.md) — required reading before writing a training loop
 - [Dart ↔ Python parity](docs/parity.md) — naming, aliases, file mapping
 - [Examples](examples/) — runnable scripts
@@ -90,6 +91,7 @@ Full version in [examples/train_xor.py](examples/train_xor.py).
 | [examples/overfit.py](examples/overfit.py) | Fastest sanity check: overfit one point |
 | [examples/transformer_encoder_forward.py](examples/transformer_encoder_forward.py) | Token IDs → hidden states |
 | [examples/save_load_checkpoint.py](examples/save_load_checkpoint.py) | Dart-compatible binary checkpoints |
+| [examples/load_pytorch_checkpoint.py](examples/load_pytorch_checkpoint.py) | Convert a PyTorch MLP to dart_cuda (requires `torch`) |
 
 Run with:
 

@@ -9,6 +9,7 @@
 | [Transformers](transformers.md) | Encoder, decoder, ViT, modalities, multimodal fusion |
 | [Optimizers](optimizers.md) | `Adam`, `SDG` |
 | [Persistence](persistence.md) | Save / load checkpoints, Dart ⇄ Python interop |
+| [PyTorch interop](pytorch_interop.md) | Convert `.pt` state-dicts into dart_cuda checkpoints |
 | [Loaders](loaders.md) | `images`, `ImageFolderLoader`, triplet loaders |
 | [Memory model](memory_model.md) | Why `dispose()` matters, the `tracker` pattern, views |
 | [Dart ↔ Python parity](parity.md) | snake_case / camelCase aliases, naming conventions |
