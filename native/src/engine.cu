@@ -11,6 +11,7 @@
 #include "kernels/layernorm_embed.cuh"
 #include "kernels/loss_optim.cuh"
 #include "kernels/conv_misc.cuh"
+#include "kernels/transpose.cuh"
 
 extern "C"
 {
@@ -1035,12 +1036,34 @@ extern "C"
         // One block per row.
         softmax_fwd_kernel<<<a->rows, 256>>>(a->data_gpu, out->data_gpu, a->rows, a->cols);
 
-        // Softmax backward is slightly complex; if you only use it for cost matrix,
-        // you can leave it empty, but here is the correct derivation:
+        // Row-wise softmax backward (see kernels/transpose.cuh).
+        // dL/dx_i = y_i * (gy_i - sum_j y_j * gy_j).
         out->_backward = [out, a]()
         {
-            // Softmax gradient logic (similar to your CE gradient but general)
-            // For matching costs, we usually don't backprop through the matching step!
+            softmax_bwd_kernel<<<a->rows, 256>>>(out->data_gpu, out->grad_gpu,
+                                                 a->grad_gpu, a->rows, a->cols);
+        };
+        return (void *)out;
+    }
+
+    // Transpose: out[j,i] = a[i,j]. Output shape is [a->cols, a->rows].
+    DLLEXPORT void *transpose_tensor(void *ah)
+    {
+        Tensor *a = (Tensor *)ah;
+        Tensor *out = make_tensor(a->cols, a->rows);
+        out->_children = {a};
+        dim3 block(DC_TRANSPOSE_TILE, DC_TRANSPOSE_TILE);
+        dim3 grid((a->cols + DC_TRANSPOSE_TILE - 1) / DC_TRANSPOSE_TILE,
+                  (a->rows + DC_TRANSPOSE_TILE - 1) / DC_TRANSPOSE_TILE);
+        transpose_fwd_kernel<<<grid, block>>>(a->data_gpu, out->data_gpu,
+                                              a->rows, a->cols);
+        out->_backward = [out, a]()
+        {
+            dim3 b(DC_TRANSPOSE_TILE, DC_TRANSPOSE_TILE);
+            dim3 g((a->rows + DC_TRANSPOSE_TILE - 1) / DC_TRANSPOSE_TILE,
+                   (a->cols + DC_TRANSPOSE_TILE - 1) / DC_TRANSPOSE_TILE);
+            transpose_bwd_kernel<<<g, b>>>(out->grad_gpu, a->grad_gpu,
+                                           a->rows, a->cols);
         };
         return (void *)out;
     }

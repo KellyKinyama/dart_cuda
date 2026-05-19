@@ -6,7 +6,8 @@
 | [Tensor API](tensor.md) | `Tensor` factories, ops, autograd, lifecycle |
 | [Layers](layers.md) | `Module`, `Layer`, `MLP`, `Conv2d`, `LayerNorm`, `FeedForward` |
 | [Attention](attention.md) | AFT self / cross / multi-head variants |
-| [Transformers](transformers.md) | Encoder, decoder, ViT, modalities, multimodal fusion |
+| [Transformers](transformers.md) | AFT encoder, decoder, ViT, modalities, multimodal fusion |
+| [Standard transformer](standard_transformer.md) | Softmax-attention encoder/decoder, GPT, MoE, MTP |
 | [Optimizers](optimizers.md) | `Adam`, `SDG` |
 | [Persistence](persistence.md) | Save / load checkpoints, Dart ⇄ Python interop |
 | [PyTorch interop](pytorch_interop.md) | Convert `.pt` state-dicts into dart_cuda checkpoints |

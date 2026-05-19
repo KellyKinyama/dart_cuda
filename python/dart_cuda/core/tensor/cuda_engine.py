@@ -110,6 +110,7 @@ class CudaEngine:
         self.logTensor = self._b("log_tensor", VP, [VP])
         self.abs_tensor = self._b("abs_tensor", VP, [VP])
         self.softmax_forward = self._b("softmax_forward", VP, [VP])
+        self.transposeTensor = self._b("transpose_tensor", VP, [VP])
         self.sumTensor = self._b("sum_tensor", VP, [VP])
         self.meanTensor = self._b("mean_tensor", VP, [VP])
 

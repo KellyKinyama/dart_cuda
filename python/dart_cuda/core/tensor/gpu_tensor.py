@@ -189,6 +189,11 @@ class Tensor:
     def softmax(self) -> "Tensor":
         return Tensor._raw(engine.softmax_forward(self._handle), self.shape)
 
+    def transpose(self) -> "Tensor":
+        # 2D transpose: out[j,i] = self[i,j]. Output shape is [cols, rows].
+        rows, cols = self.shape[-2], self.shape[-1]
+        return Tensor._raw(engine.transposeTensor(self._handle), [cols, rows])
+
     def pow(self, e: float) -> "Tensor":
         return Tensor._raw(engine.powTensor(self._handle, float(e)), self.shape)
 
