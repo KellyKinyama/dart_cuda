@@ -28,30 +28,23 @@ class TransformerDecoder extends Module {
     this.numLayers = 4,
     this.numHeads = 4,
     this.encoderEmbedSize = 64,
-  })  : assert(embedSize % numHeads == 0,
-            'embedSize must be divisible by numHeads'),
-        wte = Tensor.random([vocabSize, embedSize], scale: 0.02),
-        wpe = Tensor.random([blockSize, embedSize], scale: 0.02),
-        blocks = List.generate(
-          numLayers,
-          (_) => TransformerDecoderBlock(
-            embedSize,
-            numHeads,
-            encoderEmbedSize,
-          ),
-        ),
-        finalLayerNorm = LayerNorm(embedSize),
-        lmHead = Layer(embedSize, vocabSize, useGelu: false);
+  }) : assert(
+         embedSize % numHeads == 0,
+         'embedSize must be divisible by numHeads',
+       ),
+       wte = Tensor.random([vocabSize, embedSize], scale: 0.02),
+       wpe = Tensor.random([blockSize, embedSize], scale: 0.02),
+       blocks = List.generate(
+         numLayers,
+         (_) => TransformerDecoderBlock(embedSize, numHeads, encoderEmbedSize),
+       ),
+       finalLayerNorm = LayerNorm(embedSize),
+       lmHead = Layer(embedSize, vocabSize, useGelu: false);
 
-  Tensor forward(
-    List<int> idx,
-    Tensor encoderOutput,
-    List<Tensor> tracker,
-  ) {
+  Tensor forward(List<int> idx, Tensor encoderOutput, List<Tensor> tracker) {
     final T = idx.length;
     if (T > blockSize) {
-      throw ArgumentError(
-          'Sequence length $T exceeds block size $blockSize');
+      throw ArgumentError('Sequence length $T exceeds block size $blockSize');
     }
     var x = Tensor.embeddings(idx, wte, wpe);
     tracker.add(x);
@@ -64,10 +57,10 @@ class TransformerDecoder extends Module {
 
   @override
   List<Tensor> parameters() => [
-        wte,
-        wpe,
-        ...blocks.expand((b) => b.parameters()),
-        ...finalLayerNorm.parameters(),
-        ...lmHead.parameters(),
-      ];
+    wte,
+    wpe,
+    ...blocks.expand((b) => b.parameters()),
+    ...finalLayerNorm.parameters(),
+    ...lmHead.parameters(),
+  ];
 }

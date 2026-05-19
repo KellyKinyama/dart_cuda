@@ -12,18 +12,16 @@ class MultiHeadAttention extends Module {
   final Layer proj;
 
   MultiHeadAttention(this.numHeads, this.embedSize, {this.masked = false})
-      : assert(embedSize % numHeads == 0,
-            'embedSize must be divisible by numHeads'),
-        headSize = embedSize ~/ numHeads,
-        heads = List.generate(
-          numHeads,
-          (_) => SelfAttention(
-            embedSize,
-            embedSize ~/ numHeads,
-            masked: masked,
-          ),
-        ),
-        proj = Layer(embedSize, embedSize, useGelu: false);
+    : assert(
+        embedSize % numHeads == 0,
+        'embedSize must be divisible by numHeads',
+      ),
+      headSize = embedSize ~/ numHeads,
+      heads = List.generate(
+        numHeads,
+        (_) => SelfAttention(embedSize, embedSize ~/ numHeads, masked: masked),
+      ),
+      proj = Layer(embedSize, embedSize, useGelu: false);
 
   Tensor forward(Tensor x, List<Tensor> tracker) {
     final outs = heads.map((h) => h.forward(x, tracker)).toList();
@@ -34,7 +32,7 @@ class MultiHeadAttention extends Module {
 
   @override
   List<Tensor> parameters() => [
-        ...heads.expand((h) => h.parameters()),
-        ...proj.parameters(),
-      ];
+    ...heads.expand((h) => h.parameters()),
+    ...proj.parameters(),
+  ];
 }

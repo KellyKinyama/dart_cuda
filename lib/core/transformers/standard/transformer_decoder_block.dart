@@ -19,17 +19,17 @@ class TransformerDecoderBlock extends Module {
   final LayerNorm ln2;
   final LayerNorm ln3;
 
-  TransformerDecoderBlock(
-    this.embedSize,
-    int numHeads,
-    this.encoderEmbedSize,
-  )   : selfAttention = MultiHeadAttention(numHeads, embedSize, masked: true),
-        crossAttention =
-            MultiHeadCrossAttention(numHeads, embedSize, encoderEmbedSize),
-        ffn = FeedForward(embedSize),
-        ln1 = LayerNorm(embedSize),
-        ln2 = LayerNorm(embedSize),
-        ln3 = LayerNorm(embedSize);
+  TransformerDecoderBlock(this.embedSize, int numHeads, this.encoderEmbedSize)
+    : selfAttention = MultiHeadAttention(numHeads, embedSize, masked: true),
+      crossAttention = MultiHeadCrossAttention(
+        numHeads,
+        embedSize,
+        encoderEmbedSize,
+      ),
+      ffn = FeedForward(embedSize),
+      ln1 = LayerNorm(embedSize),
+      ln2 = LayerNorm(embedSize),
+      ln3 = LayerNorm(embedSize);
 
   Tensor forward(Tensor xDecoder, Tensor xEncoder, List<Tensor> tracker) {
     // 1. Masked self-attention.
@@ -54,11 +54,11 @@ class TransformerDecoderBlock extends Module {
 
   @override
   List<Tensor> parameters() => [
-        ...selfAttention.parameters(),
-        ...crossAttention.parameters(),
-        ...ffn.parameters(),
-        ...ln1.parameters(),
-        ...ln2.parameters(),
-        ...ln3.parameters(),
-      ];
+    ...selfAttention.parameters(),
+    ...crossAttention.parameters(),
+    ...ffn.parameters(),
+    ...ln1.parameters(),
+    ...ln2.parameters(),
+    ...ln3.parameters(),
+  ];
 }

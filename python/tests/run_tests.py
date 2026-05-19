@@ -35,14 +35,6 @@ def _install_pytest_stub() -> bool:
         import pytest  # noqa: F401
         return False
     except ModuleNotFoundError:
-        from python.tests import _compat  # noqa: F401  (when invoked as module)
-    except ImportError:
-        pass
-
-    try:
-        import pytest  # noqa: F401
-        return False
-    except Exception:
         pass
 
     spec = importlib.util.spec_from_file_location("pytest", HERE / "_compat.py")

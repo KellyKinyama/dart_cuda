@@ -25,21 +25,22 @@ class TransformerEncoder extends Module {
     this.blockSize = 128,
     this.numLayers = 6,
     this.numHeads = 8,
-  })  : assert(embedSize % numHeads == 0,
-            'embedSize must be divisible by numHeads'),
-        wte = Tensor.random([vocabSize, embedSize], scale: 0.02),
-        wpe = Tensor.random([blockSize, embedSize], scale: 0.02),
-        blocks = List.generate(
-          numLayers,
-          (_) => TransformerEncoderBlock(embedSize, numHeads),
-        ),
-        finalLayerNorm = LayerNorm(embedSize);
+  }) : assert(
+         embedSize % numHeads == 0,
+         'embedSize must be divisible by numHeads',
+       ),
+       wte = Tensor.random([vocabSize, embedSize], scale: 0.02),
+       wpe = Tensor.random([blockSize, embedSize], scale: 0.02),
+       blocks = List.generate(
+         numLayers,
+         (_) => TransformerEncoderBlock(embedSize, numHeads),
+       ),
+       finalLayerNorm = LayerNorm(embedSize);
 
   Tensor forward(List<int> idx, List<Tensor> tracker) {
     final T = idx.length;
     if (T > blockSize) {
-      throw ArgumentError(
-          'Sequence length $T exceeds block size $blockSize');
+      throw ArgumentError('Sequence length $T exceeds block size $blockSize');
     }
     var x = Tensor.embeddings(idx, wte, wpe);
     tracker.add(x);
@@ -64,9 +65,9 @@ class TransformerEncoder extends Module {
 
   @override
   List<Tensor> parameters() => [
-        wte,
-        wpe,
-        ...blocks.expand((b) => b.parameters()),
-        ...finalLayerNorm.parameters(),
-      ];
+    wte,
+    wpe,
+    ...blocks.expand((b) => b.parameters()),
+    ...finalLayerNorm.parameters(),
+  ];
 }

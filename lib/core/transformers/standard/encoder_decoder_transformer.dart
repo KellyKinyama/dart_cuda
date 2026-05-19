@@ -16,21 +16,21 @@ class EncoderDecoderTransformer extends Module {
     required int targetBlockSize,
     required int numLayers,
     required int numHeads,
-  })  : encoder = TransformerEncoder(
-          vocabSize: sourceVocabSize,
-          embedSize: embedSize,
-          blockSize: sourceBlockSize,
-          numLayers: numLayers,
-          numHeads: numHeads,
-        ),
-        decoder = TransformerDecoder(
-          vocabSize: targetVocabSize,
-          embedSize: embedSize,
-          blockSize: targetBlockSize,
-          numLayers: numLayers,
-          numHeads: numHeads,
-          encoderEmbedSize: embedSize,
-        );
+  }) : encoder = TransformerEncoder(
+         vocabSize: sourceVocabSize,
+         embedSize: embedSize,
+         blockSize: sourceBlockSize,
+         numLayers: numLayers,
+         numHeads: numHeads,
+       ),
+       decoder = TransformerDecoder(
+         vocabSize: targetVocabSize,
+         embedSize: embedSize,
+         blockSize: targetBlockSize,
+         numLayers: numLayers,
+         numHeads: numHeads,
+         encoderEmbedSize: embedSize,
+       );
 
   Tensor forward(
     List<int> sourceIdx,
@@ -43,7 +43,7 @@ class EncoderDecoderTransformer extends Module {
 
   @override
   List<Tensor> parameters() => [
-        ...encoder.parameters(),
-        ...decoder.parameters(),
-      ];
+    ...encoder.parameters(),
+    ...decoder.parameters(),
+  ];
 }

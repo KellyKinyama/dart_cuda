@@ -645,6 +645,11 @@ extern "C"
             cudaMemcpy(d_grads, h_grads, num_tensors * sizeof(float *), cudaMemcpyHostToDevice);
 
             concat_axis1_bwd<<<(out->size + 255) / 256, 256>>>(out->grad_gpu, d_grads, num_tensors, rows, cols_per_t);
+            // Must sync before freeing the device pointer table -- the
+            // kernel reads from d_grads asynchronously; freeing it while
+            // the kernel still runs corrupts the CUDA context and causes
+            // every subsequent op to fail with `illegal memory access`.
+            cudaDeviceSynchronize();
             cudaFree(d_grads);
         };
 
@@ -690,11 +695,26 @@ extern "C"
         // early-exit in training loops). Capture it in a small refcounted
         // owner so the destructor will free it when both the forward path
         // and any pending backward closure have released their reference.
+        //
+        // IMPORTANT: this struct owns a CUDA allocation, so it MUST be
+        // non-copyable / non-movable. The previous version used
+        // `std::make_shared<OffsetsHolder>(OffsetsHolder{d_offsets})`,
+        // which constructed a temporary, copied it into the shared_ptr's
+        // managed object, then ran the temporary's destructor —
+        // cudaFree'ing d_offsets while the shared_ptr still held a copy
+        // of the (now dangling) pointer. The backward kernel then read
+        // freed device memory and triggered cudaErrorIllegalAddress.
         struct OffsetsHolder {
-            int *ptr;
+            int *ptr = nullptr;
+            OffsetsHolder() = default;
+            explicit OffsetsHolder(int *p) : ptr(p) {}
+            OffsetsHolder(const OffsetsHolder &) = delete;
+            OffsetsHolder &operator=(const OffsetsHolder &) = delete;
+            OffsetsHolder(OffsetsHolder &&) = delete;
+            OffsetsHolder &operator=(OffsetsHolder &&) = delete;
             ~OffsetsHolder() { if (ptr) cudaFree(ptr); }
         };
-        auto offsetsHolder = std::make_shared<OffsetsHolder>(OffsetsHolder{d_offsets});
+        auto offsetsHolder = std::make_shared<OffsetsHolder>(d_offsets);
 
         out->_backward = [out, ts, num_tensors, cols, offsetsHolder]()
         {
@@ -705,6 +725,10 @@ extern "C"
             cudaMemcpy(d_grads, h_grads.data(), num_tensors * sizeof(float *), cudaMemcpyHostToDevice);
 
             concat_axis0_bwd<<<(out->size + 255) / 256, 256>>>(out->grad_gpu, d_grads, num_tensors, offsetsHolder->ptr, cols);
+            // Must sync before freeing the device pointer table -- the
+            // kernel reads from d_grads asynchronously; freeing it while
+            // the kernel still runs corrupts the CUDA context.
+            cudaDeviceSynchronize();
             cudaFree(d_grads);
             // offsetsHolder is freed automatically when this lambda is
             // destroyed (i.e. when `out` is destroyed).
@@ -761,7 +785,10 @@ extern "C"
             int total = T * D;
             embedding_bwd<<<(total + 255) / 256, 256>>>(d_indices, out->grad_gpu, wte->grad_gpu, wpe->grad_gpu, T, D);
 
-            // Clean up indices after backward
+            // Clean up indices after backward. Must sync first: the
+            // kernel reads d_indices asynchronously, so freeing it
+            // before the kernel completes corrupts CUDA state.
+            cudaDeviceSynchronize();
             cudaFree(d_indices);
         };
 
@@ -814,6 +841,9 @@ extern "C"
             cross_entropy_bwd_hyper<<<T, 128>>>(
                 logits->data_gpu, d_targets, logits->grad_gpu, T, V, h_grad_out, GLOBAL_EPSILON);
 
+            // Sync before freeing: the kernel reads d_targets
+            // asynchronously.
+            cudaDeviceSynchronize();
             cudaFree(d_targets);
         };
 

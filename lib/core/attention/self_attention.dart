@@ -64,9 +64,9 @@ class SelfAttention extends Module {
   final Layer value;
 
   SelfAttention(this.embedSize, this.headSize, {this.masked = false})
-      : key = Layer(embedSize, headSize, useGelu: false),
-        query = Layer(embedSize, headSize, useGelu: false),
-        value = Layer(embedSize, headSize, useGelu: false);
+    : key = Layer(embedSize, headSize, useGelu: false),
+      query = Layer(embedSize, headSize, useGelu: false),
+      value = Layer(embedSize, headSize, useGelu: false);
 
   Tensor forward(Tensor x, List<Tensor> tracker) {
     final q = query.forward(x, tracker);
@@ -77,8 +77,8 @@ class SelfAttention extends Module {
 
   @override
   List<Tensor> parameters() => [
-        ...query.parameters(),
-        ...key.parameters(),
-        ...value.parameters(),
-      ];
+    ...query.parameters(),
+    ...key.parameters(),
+    ...value.parameters(),
+  ];
 }

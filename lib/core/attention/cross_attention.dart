@@ -14,13 +14,10 @@ class CrossAttention extends Module {
   final Layer key;
   final Layer value;
 
-  CrossAttention(
-    this.decoderEmbedSize,
-    this.encoderEmbedSize,
-    this.headSize,
-  )   : query = Layer(decoderEmbedSize, headSize, useGelu: false),
-        key = Layer(encoderEmbedSize, headSize, useGelu: false),
-        value = Layer(encoderEmbedSize, headSize, useGelu: false);
+  CrossAttention(this.decoderEmbedSize, this.encoderEmbedSize, this.headSize)
+    : query = Layer(decoderEmbedSize, headSize, useGelu: false),
+      key = Layer(encoderEmbedSize, headSize, useGelu: false),
+      value = Layer(encoderEmbedSize, headSize, useGelu: false);
 
   Tensor forward(Tensor xDecoder, Tensor xEncoder, List<Tensor> tracker) {
     final q = query.forward(xDecoder, tracker);
@@ -31,8 +28,8 @@ class CrossAttention extends Module {
 
   @override
   List<Tensor> parameters() => [
-        ...query.parameters(),
-        ...key.parameters(),
-        ...value.parameters(),
-      ];
+    ...query.parameters(),
+    ...key.parameters(),
+    ...value.parameters(),
+  ];
 }

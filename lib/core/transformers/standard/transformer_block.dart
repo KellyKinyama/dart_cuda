@@ -20,10 +20,10 @@ class TransformerBlock extends Module {
   final LayerNorm ln2;
 
   TransformerBlock(this.embedSize, int numHeads, {bool masked = false})
-      : attention = MultiHeadAttention(numHeads, embedSize, masked: masked),
-        ffn = FeedForward(embedSize),
-        ln1 = LayerNorm(embedSize),
-        ln2 = LayerNorm(embedSize);
+    : attention = MultiHeadAttention(numHeads, embedSize, masked: masked),
+      ffn = FeedForward(embedSize),
+      ln1 = LayerNorm(embedSize),
+      ln2 = LayerNorm(embedSize);
 
   Tensor forward(Tensor x, List<Tensor> tracker) {
     final xNorm1 = ln1.forward(x, tracker);
@@ -40,9 +40,9 @@ class TransformerBlock extends Module {
 
   @override
   List<Tensor> parameters() => [
-        ...attention.parameters(),
-        ...ffn.parameters(),
-        ...ln1.parameters(),
-        ...ln2.parameters(),
-      ];
+    ...attention.parameters(),
+    ...ffn.parameters(),
+    ...ln1.parameters(),
+    ...ln2.parameters(),
+  ];
 }

@@ -15,22 +15,25 @@ class MultiHeadCrossAttention extends Module {
     this.numHeads,
     this.decoderEmbedSize,
     this.encoderEmbedSize,
-  )   : assert(decoderEmbedSize % numHeads == 0,
-            'decoderEmbedSize must be divisible by numHeads'),
-        headSize = decoderEmbedSize ~/ numHeads,
-        heads = List.generate(
-          numHeads,
-          (_) => CrossAttention(
-            decoderEmbedSize,
-            encoderEmbedSize,
-            decoderEmbedSize ~/ numHeads,
-          ),
+  ) : assert(
+        decoderEmbedSize % numHeads == 0,
+        'decoderEmbedSize must be divisible by numHeads',
+      ),
+      headSize = decoderEmbedSize ~/ numHeads,
+      heads = List.generate(
+        numHeads,
+        (_) => CrossAttention(
+          decoderEmbedSize,
+          encoderEmbedSize,
+          decoderEmbedSize ~/ numHeads,
         ),
-        proj = Layer(decoderEmbedSize, decoderEmbedSize, useGelu: false);
+      ),
+      proj = Layer(decoderEmbedSize, decoderEmbedSize, useGelu: false);
 
   Tensor forward(Tensor xDecoder, Tensor xEncoder, List<Tensor> tracker) {
-    final outs =
-        heads.map((h) => h.forward(xDecoder, xEncoder, tracker)).toList();
+    final outs = heads
+        .map((h) => h.forward(xDecoder, xEncoder, tracker))
+        .toList();
     final concat = Tensor.concat(outs);
     tracker.add(concat);
     return proj.forward(concat, tracker);
@@ -38,7 +41,7 @@ class MultiHeadCrossAttention extends Module {
 
   @override
   List<Tensor> parameters() => [
-        ...heads.expand((h) => h.parameters()),
-        ...proj.parameters(),
-      ];
+    ...heads.expand((h) => h.parameters()),
+    ...proj.parameters(),
+  ];
 }
