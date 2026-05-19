@@ -519,6 +519,62 @@ void main() {
     });
   });
 
+  group('Tensor — row broadcast', () {
+    test('add: [B, N] + [1, N] applies bias to every row', () {
+      final a = Tensor.fromList(
+        [3, 4],
+        [
+          1, 2, 3, 4, //
+          5, 6, 7, 8, //
+          9, 10, 11, 12,
+        ],
+      );
+      final b = Tensor.fromList([1, 4], [10, 20, 30, 40]);
+      final c = a + b;
+      addTearDown(() {
+        a.dispose();
+        b.dispose();
+        c.dispose();
+      });
+
+      expect(c.shape, equals([3, 4]));
+      expect(
+        c.data,
+        closeToList([
+          11, 22, 33, 44, //
+          15, 26, 37, 48, //
+          19, 30, 41, 52,
+        ]),
+      );
+    });
+
+    test('add: [B, N] + [1, N] reduces gradient into the bias', () {
+      // dL/db[j] = sum over batch of dL/dc[i, j]. With loss = sum(c) the
+      // upstream grad is all-ones, so the bias gradient is the row count.
+      final a = Tensor.fromList(
+        [3, 4],
+        [
+          1, 1, 1, 1, //
+          1, 1, 1, 1, //
+          1, 1, 1, 1,
+        ],
+      );
+      final b = Tensor.fromList([1, 4], [0.5, 0.5, 0.5, 0.5]);
+      final c = a + b;
+      final loss = c.sum();
+      loss.backward();
+      addTearDown(() {
+        a.dispose();
+        b.dispose();
+        c.dispose();
+        loss.dispose();
+      });
+
+      expect(a.grad, closeToList(List<double>.filled(12, 1)));
+      expect(b.grad, closeToList([3, 3, 3, 3]));
+    });
+  });
+
   group('Tensor — dispose', () {
     test('dispose is idempotent', () {
       final x = Tensor.fromList([1, 2], [1.0, 2.0]);

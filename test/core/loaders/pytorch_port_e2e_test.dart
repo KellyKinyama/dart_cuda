@@ -120,17 +120,12 @@ void main() {
       ];
       final fc2B = <double>[0.0, 0.0];
 
-      // NOTE: we deliberately use batch=1 here. The Dart engine's `+`
-      // operator does not yet implement `[1, N] + [B, N]` row-broadcast
-      // (see `_scalarOp` in `lib/core/tensor/gpu_tensor.dart` — the
-      // `isRowBroadcast` flag is computed but the kernel call is plain
-      // elementwise, which silently reads past the bias allocation for
-      // batch>1). That's a pre-existing engine limitation, orthogonal
-      // to the PyTorch-port pipeline this test exercises. With batch=1
-      // the bias is applied correctly and we get exact PyTorch parity.
       final x = <double>[
-        // [B=1, in=3]
+        // [B=2, in=3] — batch>1 exercises the row-broadcast bias add
+        // (`[1, out] + [B, out]`) which is handled by a dedicated CUDA
+        // kernel `add_tensor_row_broadcast`.
         1.0, 2.0, 3.0,
+        -1.0, 0.5, 0.0,
       ];
 
       // ---- 2. Build the safetensors blob (PyTorch on-disk format). ---------
@@ -171,7 +166,7 @@ void main() {
       }
 
       // ---- 4. Forward pass on GPU. -----------------------------------------
-      final xT = Tensor.fromList([1, 3], x);
+      final xT = Tensor.fromList([2, 3], x);
       final tracker = <Tensor>[];
       final h1 = l1.forward(xT, tracker);
       final h1Act = h1.tanh();
@@ -190,7 +185,7 @@ void main() {
       // ---- 5. Reference PyTorch math on CPU. -------------------------------
       final h1Ref = _linearRef(
         x: x,
-        batch: 1,
+        batch: 2,
         inDim: 3,
         outDim: 4,
         w: fc1W,
@@ -199,7 +194,7 @@ void main() {
       final h1ActRef = _tanhRef(h1Ref);
       final yRef = _linearRef(
         x: h1ActRef,
-        batch: 1,
+        batch: 2,
         inDim: 4,
         outDim: 2,
         w: fc2W,
@@ -207,7 +202,7 @@ void main() {
       );
 
       // ---- 6. Compare. -----------------------------------------------------
-      expect(yT.shape, equals([1, 2]));
+      expect(yT.shape, equals([2, 2]));
       expect(gpuOut.length, equals(yRef.length));
       for (var i = 0; i < gpuOut.length; i++) {
         expect(

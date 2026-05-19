@@ -56,6 +56,37 @@ __global__ void add_bwd(float *go, float *ga, float *gb, int n)
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Row-broadcast add: out[i, j] = a[i, j] + b[0, j].
+// a is [M, N], b is [1, N], out is [M, N]. Used by Linear/Layer bias add.
+// ---------------------------------------------------------------------------
+__global__ void add_row_broadcast_fwd(const float *a, const float *b,
+                                      float *out, int M, int N)
+{
+    int j = blockIdx.x * blockDim.x + threadIdx.x; // column index
+    int i = blockIdx.y * blockDim.y + threadIdx.y; // row index
+    if (i < M && j < N)
+    {
+        out[i * N + j] = a[i * N + j] + b[j];
+    }
+}
+
+// Backward: grad flows through addition. ga gets go elementwise (no atomic
+// needed; each [i, j] is owned by one thread). gb is reduced across rows,
+// so we use atomicAdd into gb[j].
+__global__ void add_row_broadcast_bwd(const float *go, float *ga, float *gb,
+                                      int M, int N)
+{
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i < M && j < N)
+    {
+        float g = go[i * N + j];
+        ga[i * N + j] += g;
+        atomicAdd(&gb[j], g);
+    }
+}
 __global__ void sub_fwd(float *a, float *b, float *out, int n)
 {
     // Each thread handles 4 elements

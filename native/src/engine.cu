@@ -344,6 +344,32 @@ extern "C"
 
         return (void *)out;
     }
+
+    // Row-broadcast add: out[M, N] = a[M, N] + b[1, N]. Used by Linear-style
+    // layers to add a [1, out] bias to a [batch, out] matmul result. Plain
+    // `add_tensors` does element-wise add over `a->size`, which silently
+    // reads past the bias allocation for batch > 1.
+    DLLEXPORT void *add_tensor_row_broadcast(void *ah, void *bh)
+    {
+        Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;
+        int M = a->rows, N = a->cols;
+        Tensor *out = make_tensor(M, N);
+        out->_children = {a, b};
+
+        dim3 block(16, 16);
+        dim3 grid((N + block.x - 1) / block.x, (M + block.y - 1) / block.y);
+
+        add_row_broadcast_fwd<<<grid, block>>>(
+            a->data_gpu, b->data_gpu, out->data_gpu, M, N);
+
+        out->_backward = [out, a, b, M, N, block, grid]()
+        {
+            add_row_broadcast_bwd<<<grid, block>>>(
+                out->grad_gpu, a->grad_gpu, b->grad_gpu, M, N);
+        };
+
+        return (void *)out;
+    }
     DLLEXPORT void *sub_tensors(void *ah, void *bh)
     {
         Tensor *a = (Tensor *)ah, *b = (Tensor *)bh;

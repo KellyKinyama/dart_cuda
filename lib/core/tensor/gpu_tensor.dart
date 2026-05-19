@@ -164,7 +164,11 @@ class Tensor {
 
       // 2. Check for Row-Broadcasting:
       // This allows adding a [1, N] bias to a [M, N] matrix
-      bool isRowBroadcast = (other.shape[0] == 1 && other.shape[1] == shape[1]);
+      bool isRowBroadcast =
+          (other.shape.length == 2 &&
+          other.shape[0] == 1 &&
+          shape.length == 2 &&
+          other.shape[1] == shape[1]);
 
       // 3. Scalar broadcast: `other` is a single value broadcast over `this`.
       // Routes to dedicated CUDA kernels with full autograd through both
@@ -174,6 +178,19 @@ class Tensor {
         if (fn != null) {
           return Tensor._raw(fn(_handle, other._handle), shape);
         }
+      }
+
+      // 4. Row-broadcast add: dedicated CUDA kernel that adds a [1, N]
+      // bias to a [M, N] matrix. Without this the plain elementwise
+      // kernel would read past the bias allocation for M > 1, silently
+      // dropping the bias on rows beyond the first.
+      if (!exactMatch &&
+          isRowBroadcast &&
+          identical(opFunc, engine.addTensors)) {
+        return Tensor._raw(
+          engine.addTensorRowBroadcast(_handle, other._handle),
+          shape,
+        );
       }
 
       // if (!isRowBroadcast) {

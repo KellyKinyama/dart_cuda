@@ -274,6 +274,7 @@ class CudaEngine {
   late _D_op2 mulTensors;
   late _D_op2 divTensors;
   late _D_op2 addTensorScalar;
+  late _D_op2 addTensorRowBroadcast;
   late _D_op2 subTensorScalar;
   late _D_op2 mulTensorScalar;
   late _D_op2 divTensorScalar;
@@ -330,6 +331,9 @@ class CudaEngine {
     mulTensors = _lib.lookupFunction<_C_op2, _D_op2>('mul_tensors');
     divTensors = _lib.lookupFunction<_C_op2, _D_op2>('div_tensors');
     addTensorScalar = _lib.lookupFunction<_C_op2, _D_op2>('add_tensor_scalar');
+    addTensorRowBroadcast = _lib.lookupFunction<_C_op2, _D_op2>(
+      'add_tensor_row_broadcast',
+    );
     subTensorScalar = _lib.lookupFunction<_C_op2, _D_op2>('sub_tensor_scalar');
     mulTensorScalar = _lib.lookupFunction<_C_op2, _D_op2>('mul_tensor_scalar');
     divTensorScalar = _lib.lookupFunction<_C_op2, _D_op2>('div_tensor_scalar');
