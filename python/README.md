@@ -4,81 +4,133 @@ Python `ctypes` bindings for the [`dart_cuda`](../) CUDA tensor / autograd
 engine. The package mirrors the Dart `lib/` layout one-for-one so the same
 native `libmat_mul.so` powers both languages.
 
-## Build the native library
+## Quick links
 
-From the repo root:
+- [Getting started](docs/getting_started.md) — build the `.so`, install, run XOR
+- [Tensor API](docs/tensor.md) · [Layers](docs/layers.md) · [Attention](docs/attention.md) · [Transformers](docs/transformers.md)
+- [Optimizers](docs/optimizers.md) · [Persistence](docs/persistence.md) · [Loaders](docs/loaders.md)
+- [Memory model](docs/memory_model.md) — required reading before writing a training loop
+- [Dart ↔ Python parity](docs/parity.md) — naming, aliases, file mapping
+- [Examples](examples/) — runnable scripts
+
+## Install
 
 ```bash
+# 1. Build the native engine (from repo root)
 nvcc --shared -o native/lib/libmat_mul.so native/src/engine.cu -Xcompiler -fPIC
-```
 
-The Python loader looks for the library in this order:
-
-1. The `DART_CUDA_LIB` environment variable (absolute path).
-2. `./native/lib/libmat_mul.so` relative to the current working directory.
-3. Walking up from the package source until `native/lib/libmat_mul.so` is found.
-
-## Install (editable)
-
-```bash
+# 2. Install the package
 cd python
 pip install -e .
-# Optional image-loader extras
+
+# Optional: PIL-based image loaders
 pip install -e ".[images]"
 ```
 
-## Quick start
+The loader resolves `libmat_mul.so` via, in order:
+
+1. `$DART_CUDA_LIB`
+2. `./native/lib/libmat_mul.so`
+3. Walking up from the package source until it finds `native/lib/libmat_mul.so`
+
+## Hello tensor
 
 ```python
 import dart_cuda as dc
 
-a = dc.Tensor.from_list([2, 2], [1.0, 2.0, 3.0, 4.0])
-b = dc.Tensor.from_list([2, 2], [5.0, 6.0, 7.0, 8.0])
+a = dc.Tensor.from_list([2, 2], [1, 2, 3, 4])
+b = dc.Tensor.from_list([2, 2], [5, 6, 7, 8])
 c = a.matmul(b)
-print(c.fetch_data())  # [19, 22, 43, 50]
+print(c.fetch_data())          # [19.0, 22.0, 43.0, 50.0]
 
 a.dispose(); b.dispose(); c.dispose()
 ```
 
-A complete MLP/XOR example lives in `examples/train_xor.py`.
+## Training loop pattern
 
-## Memory model
+Every `forward()` takes a `tracker: list[Tensor]` and appends every
+intermediate so it can be freed at the end of the step. Parameters and views
+are **never** disposed.
 
-The C++ autograd graph stores raw `Tensor*` pointers that Python's garbage
-collector can't see, so every Python `Tensor` exposes an explicit `dispose()`.
-Mirroring the Dart codebase, training loops typically push intermediates into a
-`tracker: list[Tensor]` and call `dispose()` on each entry at the end of the
-step.
+```python
+import dart_cuda as dc
+from dart_cuda.core.layers.mlp import MLP
+from dart_cuda.core.optimizers.adam import Adam
 
-Views (`reshape`, `slice` with `is_view=True`) share storage with their
-parent and **must not** be disposed independently.
+model = MLP(2, [8, 1])
+opt   = Adam(model.parameters(), lr=1e-2)
+
+for step in range(200):
+    tracker: list[dc.Tensor] = []
+    x = dc.Tensor.from_list([1, 2], [1.0, 0.0])
+    y = dc.Tensor.from_list([1, 1], [1.0])
+    tracker += [x, y]
+
+    pred = model.forward(x, tracker)
+    loss = pred.mse_loss(y)
+    tracker.append(loss)
+
+    opt.zero_grad()
+    loss.backward()
+    opt.step()
+
+    for t in tracker:
+        t.dispose()
+
+opt.dispose()
+```
+
+Full version in [examples/train_xor.py](examples/train_xor.py).
+
+## Examples
+
+| Script | What it shows |
+|---|---|
+| [examples/train_xor.py](examples/train_xor.py) | MLP + Adam end-to-end on XOR |
+| [examples/overfit.py](examples/overfit.py) | Fastest sanity check: overfit one point |
+| [examples/transformer_encoder_forward.py](examples/transformer_encoder_forward.py) | Token IDs → hidden states |
+| [examples/save_load_checkpoint.py](examples/save_load_checkpoint.py) | Dart-compatible binary checkpoints |
+
+Run with:
+
+```bash
+cd python
+PYTHONPATH=. python3 examples/train_xor.py
+```
+
+## What's ported
+
+| Area | Modules |
+|---|---|
+| `core/tensor` | `Tensor`, `CudaEngine` (full ctypes FFI) |
+| `core/layers` | `Module`, `Layer`, `LayerNorm`, `FeedForward`, `MLP`, `Conv2d` |
+| `core/attention` | `AFTAttention`, `AFTCrossAttention`, `MultiHeadAFT`, `MultiHeadAFTCross` |
+| `core/transformers/aft` | encoder & decoder blocks, encoder, decoder, text decoder block |
+| `core/transformers/vision` | `ViTBackbone`, `ViTFaceEmbeddingGPU`, `ViTObjectDetector` |
+| `core/transformers/modalities` | text decoder, text/audio/video transformers, multimodal fusion |
+| `core/optimizers` | `Adam`, `SDG` |
+| `core/utils` | `persistence` (Dart-compatible checkpoints), `triplet_loss`, `hungarian_algorithm`, `network_utils` |
+| `loaders` | `images`, `image_folder_loader`, `triplet_loader`, `triplet_loader2` |
+
+## Not ported (deferred)
+
+- `core/models/mu_zero/*` and `core/models/chess/*` — depend on the Dart
+  `bishop` chess package.
+- `core/transformers/deepseek/*` — can be added on request.
+- `loaders/chess.dart`, `loaders/dataset.dart` — large embedded data.
 
 ## API parity
 
-Every module under `dart_cuda/` is a 1:1 port of the corresponding file in
-`lib/`. Public methods are exposed in both `snake_case` (Pythonic) and
-`camelCase` (Dart-style) for ease of porting code back and forth — for example:
+Public methods are exposed in both `snake_case` (Pythonic) and `camelCase`
+(Dart-style) — `Tensor.fromList`, `Tensor.from_list`, `t.fetchData()`,
+`t.fetch_data()`, etc. See [docs/parity.md](docs/parity.md) for the full
+table.
 
-- `Tensor.from_list(...)` ≡ `Tensor.fromList(...)`
-- `tensor.fetch_data()` ≡ `tensor.fetchData()`
-- `tensor.zero_grad()` ≡ `tensor.zeroGrad()`
+## Memory model
 
-## Status
+GPU memory is owned by the C++ engine; Python's GC can't see into the
+autograd graph. Every Python `Tensor` exposes `dispose()` and **you must
+call it**, typically via the `tracker` pattern. Views (`reshape`,
+`slice`) share storage with their parent and must not be disposed.
 
-Ported:
-
-- `core/tensor` — full tensor type and engine FFI
-- `core/layers` — `Module`, `Layer`, `LayerNorm`, `FeedForward`, `MLP`, `Conv2d`
-- `core/attention` — AFT (self + cross + multi-head + multi-head cross)
-- `core/transformers/aft` — encoder/decoder blocks, encoder, decoder, text decoder block
-- `core/transformers/vision` — ViT backbone, face embedding head, object detector
-- `core/transformers/modalities` — text decoder, text/audio/video transformers, multimodal fusion
-- `core/optimizers` — Adam, SDG
-- `core/utils` — persistence (Dart-compatible binary checkpoints), triplet loss, Hungarian algorithm
-- `loaders` — `images`, `image_folder_loader`, `triplet_loader`, `triplet_loader2`
-
-Deferred / not ported:
-
-- `core/models/mu_zero/*` and `core/models/chess/*` (depend on the Dart `bishop` chess package)
-- `core/transformers/deepseek/*` (can be added later)
-- `loaders/chess.dart`, `loaders/dataset.dart` (large embedded data)
+See [docs/memory_model.md](docs/memory_model.md) for the rules.
